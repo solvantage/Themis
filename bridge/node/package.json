@@ -1,0 +1,20 @@
+{
+  "name": "themis-check",
+  "version": "0.1.0",
+  "description": "Hold Themis as one check in a JavaScript project: PASS, FAIL and REFUSE, kept apart.",
+  "type": "module",
+  "exports": "./index.mjs",
+  "bin": {
+    "themis-check": "./cli.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "cli.mjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
