@@ -430,8 +430,8 @@ def loop(tmp_path: Path) -> World:
         built.write(f"receipts/spend/{name}.json", json.dumps(receipt))
     run = {"role": "writer", "at": "2026-03-02T09:00:00+00:00", "cost": 40, "produced": ["content/a/brief.toml"]}
     idle = {**run, "at": "2026-03-03T09:00:00+00:00", "cost": 55, "produced": [], "flagged": True}
-    built.write("receipts/run/r1.json", json.dumps(run))
-    built.write("receipts/run/r2.json", json.dumps({**idle, "reason": "topic dropped"}))
+    built.write("receipts/agent-run/r1.json", json.dumps(run))
+    built.write("receipts/agent-run/r2.json", json.dumps({**idle, "reason": "topic dropped"}))
     return built
 
 
@@ -444,8 +444,8 @@ def test_the_loop_report_shows_each_item_the_totals_the_overrun_and_the_idle_run
     assert "**Measured overrun: 1.25.**" in page and "over the 1 item(s) that have both" in page
     assert "Amounts are in credits." in page
     assert "2 agent run(s) are recorded, at a total cost of 95. 1 of them produced nothing, at a cost of 55." in page
-    assert "- `receipts/run/r2.json`: writer, 2026-03-03T09:00:00+00:00, cost 55, flagged: topic dropped" in page
-    assert "receipts/run/r1.json" not in page  # a run that produced something is not listed
+    assert "- `receipts/agent-run/r2.json`: writer, 2026-03-03T09:00:00+00:00, cost 55, flagged: topic dropped" in page
+    assert "receipts/agent-run/r1.json" not in page  # a run that produced something is not listed
 
 
 def test_the_loop_report_is_the_same_page_whatever_order_it_is_asked_in(tmp_path: Path) -> None:
@@ -463,14 +463,14 @@ def test_the_loop_report_never_guesses_a_value_it_cannot_read(tmp_path: Path) ->
     built.write("content/b/plan.toml", "estimate = \n")
     built.write("receipts/spend/a-3.json", json.dumps({"item": "content/a", "amount": "a lot", "tool": "render-tool"}))
     built.write("receipts/spend/a-4.json", '{"item": "content/a", "amount": 900\n')
-    built.write("receipts/run/r3.json", "not a receipt\n")
+    built.write("receipts/agent-run/r3.json", "not a receipt\n")
     page = loop_report.build(built.root, manifests.load(built.root), ["content/a", "content/b", "content/c"])
     assert "| Three mistakes (`content/b`) | sales | — | — | — |" in page
     assert "| `content/c` | — | — | — | — |" in page
     assert "1,250<!--s:content/a-->" in page  # the receipt that cannot be read is not counted
     assert "- `receipts/spend/a-3.json` is not counted: spend receipt.amount must be a number" in page
     assert "- `receipts/spend/a-4.json` is not counted: this spend receipt cannot be read" in page
-    assert "- `receipts/run/r3.json` is not counted: this run receipt cannot be read" in page
+    assert "- `receipts/agent-run/r3.json` is not counted: this run receipt cannot be read" in page
     assert "- `content/b/plan.toml` cannot be read" in page
     empty = loop_report.build(built.root, manifests.load(built.root), ["content/c"])
     assert "**Measured overrun: not measured.**" in empty

@@ -197,3 +197,16 @@ def test_an_item_goes_out_only_on_the_owners_grant_for_it(tmp_path: Path) -> Non
     world.write("content/b/brief.toml", 'kind = "content"\ntitle = "t"\n')
     world.write("content/b/post.toml", f'platform = "a platform"\nat = "2999-01-01T00:00:00+00:00"\ngrant = "{grant}"\n')
     assert _verdict(world, "publish/granted") is Verdict.FAIL  # the same yes does not open a second item
+
+
+def test_a_core_run_receipt_is_not_read_as_an_agent_run(tmp_path: Path) -> None:
+    """`themis run` records a command and its exit status. The pack's own agent-run receipts, which
+    record a cost and what was produced, live in a folder of their own, so the two never mix."""
+    world = World(tmp_path / "repo")
+    world.root.mkdir()
+    world.manifest(SPENDING)
+    world.write("receipts/run/a-1.json", json.dumps({"kind": "run", "work": "content/a", "command": ["make"],
+                                                     "exit_status": 0, "at": "2026-03-02T10:00:00+00:00"}))
+    world.write("receipts/agent-run/w-1.json", json.dumps({"role": "writer", "at": "2026-03-02T09:00:00+00:00",
+                                                           "cost": 40, "produced": ["content/a/brief.toml"]}))
+    assert _verdict(world, "spend/agent-runs") is Verdict.PASS

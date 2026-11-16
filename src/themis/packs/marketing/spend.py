@@ -6,7 +6,7 @@ A cost is never typed. Each paid job leaves a spend receipt, written by the tool
 
 Each agent run leaves a run receipt:
 
-    receipts/run/<name>.json      role, at, cost, produced (a list of paths), flagged, reason
+    receipts/agent-run/<name>.json  role, at, cost, produced (a list of paths), flagged, reason
 
 `item` is the item's folder. A receipt copied from `.themis/receipts/` to `receipts/` is the same
 receipt, and is counted once. A receipt that cannot be read is refused, never skipped. In a
@@ -50,6 +50,11 @@ _STATED = re.compile(r"expected overrun[^\d\n]{0,20}(\d+(?:\.\d+)?)", re.IGNOREC
 def money(value: float) -> str:
     """An amount as a page shows it: thousands separated, at most two decimals."""
     return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+
+#: The receipt of one agent run, kept apart from the core's `themis run` receipts, which record a
+#: command and its exit status, not a cost and what was produced.
+AGENT_RUN = "agent-run"
 
 
 def read_receipts(root: Path, kind: str) -> list[dict[str, Any]]:
@@ -411,10 +416,10 @@ def _(world: World) -> None:
     learned="An agent run cost money and produced nothing, and nobody was told.",
 )
 def agent_runs(ctx: Context) -> None:
-    for path in receipts.unreadable(ctx.root, "run"):
+    for path in receipts.unreadable(ctx.root, AGENT_RUN):
         ctx.refuse("this run receipt cannot be read", where=path,
                    fix="a receipt is written by a tool; run the run's adapter again")
-    for receipt in read_receipts(ctx.root, "run"):
+    for receipt in read_receipts(ctx.root, AGENT_RUN):
         ctx.inspect()
         where, cost, produced = receipt["_path"], receipt.get("cost"), receipt.get("produced")
         if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not math.isfinite(cost):
@@ -432,7 +437,7 @@ def agent_runs(ctx: Context) -> None:
 def _run(world: World, name: str = "writer-1", **changes: Any) -> None:
     fields = {"role": "writer", "at": "2026-03-02T09:00:00+00:00", "cost": 40, "produced": ["content/a/brief.toml"]}
     world.manifest(SETUP)
-    world.write(f"receipts/run/{name}.json", json.dumps({**fields, **changes}))
+    world.write(f"receipts/{AGENT_RUN}/{name}.json", json.dumps({**fields, **changes}))
 
 
 @proof("spend/agent-runs", "a run with its cost and what it produced, a free run, and an idle run that says why",
@@ -446,7 +451,7 @@ def _(world: World) -> None:
 @proof("spend/agent-runs", "a run receipt that is not valid JSON", expect="refuse", contains="receipt cannot be read")
 def _(world: World) -> None:
     _run(world)
-    world.write("receipts/run/writer-2.json", '{"role": "writer", "cost": 40\n')
+    world.write(f"receipts/{AGENT_RUN}/writer-2.json", '{"role": "writer", "cost": 40\n')
 
 
 @proof("spend/agent-runs", "a cost written as text", expect="fail", contains="records no cost as a number")

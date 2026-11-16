@@ -348,6 +348,8 @@ def _rate(value: Any) -> bool:
 def calibrated(ctx: Context) -> None:
     used: dict[tuple[str, str], str] = {}  # each gate and version in use, with the first decision that used it
     for record in ctx.records("decision"):
+        if record.get("by") == "owner":
+            continue  # the owner's own call used no gate, so there is no gate to have calibrated
         used.setdefault((record.get("gate"), record.get("gate_version")), record.path)
     held = receipts.read_all(ctx.root, "calibration")
     most, least = ctx.param("max_false_alarm"), ctx.param("min_power")
@@ -391,6 +393,14 @@ def _(world: World) -> None:
     world.manifest(NO_PACK)
     _decision(world)
     _receipt(world, false_alarm_rate=0.1, power=0.8)
+
+
+@proof("decision/calibrated", "the owner's own call needs no receipt, beside a calibrated gate", expect="pass")
+def _(world: World) -> None:
+    world.manifest(NO_PACK)
+    _decision(world)
+    _decision(world, "b", gate_version="owner", by="owner", reason="kept while a rival is planned")
+    _receipt(world)
 
 
 @proof("decision/calibrated", "a gate with no receipt at all", expect="fail",

@@ -2,8 +2,9 @@
 
 Three hooks, installed into the agent host's settings file:
 
-    before a tool call   stop a delete, a remote command, a forced push, `themis grant`, and any
-                         edit to a protected file, and ask the owner
+    before a tool call   stop a delete, a remote command, a forced push, `themis grant`, the
+                         owner's own `themis decide` and `themis attest`, and any edit to a
+                         protected file, and ask the owner
     session start        remember which breaches already exist, so old ones do not block new work
     end of turn          run `themis check` on the changed work; a new breach keeps the turn open
 
@@ -30,6 +31,7 @@ SETTINGS = ".claude/settings.json"
 MAX_BLOCKS = 3
 STATE = ".themis/hook-state.json"
 MARK = "themis hook"
+OWNER = "owner"  # the judge whose rows only the owner ticks
 
 DELETERS = {"rm", "rmdir", "unlink", "shred"}
 REMOTES = {"ssh", "scp", "sftp"}
@@ -98,6 +100,16 @@ def _after_themis(words: list[str]) -> str | None:
     return None
 
 
+def _flag(words: list[str], name: str) -> str | None:
+    """The value given to a flag, written as `--name value` or `--name=value`."""
+    for index, word in enumerate(words):
+        if word == name and index + 1 < len(words):
+            return words[index + 1]
+        if word.startswith(f"{name}="):
+            return word.split("=", 1)[1]
+    return None
+
+
 def _relative(word: str, root: Path) -> str | None:
     """A word as a repository path, or None when it is not inside the repository."""
     if not word or word.startswith("-"):
@@ -147,6 +159,8 @@ def judge_command(command: str, root: Path, protected: list[str]) -> str | None:
         if _after_themis(words) == "decide" and ("--by=owner" in words or "owner" in words[words.index("--by") + 1:][:1]
                                                  if "--by" in words else "--by=owner" in words):
             return "Only the owner overrules a gate."
+        if _after_themis(words) == "attest" and _flag(words, "--judge") == OWNER:
+            return "Only the owner attests as the owner."
         targets = [words[index + 1] for index, word in enumerate(words[:-1]) if word in (">", ">>", ">|")]
         if program in WRITERS or (program in IN_PLACE and any(arg.startswith("-i") for arg in args)):
             targets += args

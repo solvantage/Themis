@@ -153,6 +153,19 @@ def test_the_kit_names_each_way_a_pack_falls_short(tmp_path: Path, name: str, ol
     assert any(said in problem for problem in found), found
 
 
+def test_prove_fails_a_project_whose_pack_falls_short_of_the_contract(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from themis.cli import EXIT_FAIL, EXIT_PASS, main
+
+    good = project(tmp_path / "good", "omicron", "")
+    assert main(["prove", "--root", str(good.root)]) == EXIT_PASS
+    weak = project(tmp_path / "weak", "pi", "", GOOD_PACK.replace('"The notes file stays short."',
+                                                                    '"The notes file stays short"'))
+    assert main(["prove", "--root", str(weak.root)]) == EXIT_FAIL
+    assert "the pack pi falls short of the pack contract" in capsys.readouterr().out
+
+
 def test_calibration_reports_the_worst_case_of_each_kind(tmp_path: Path) -> None:
     measured = kit.calibrate(loaded(tmp_path, "nu"), "threshold")
     assert (measured["false_alarm_rate"], measured["power"], measured["gate_version"]) == (0.0, 1.0, "2")

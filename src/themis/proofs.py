@@ -124,6 +124,10 @@ def judge(root: Path, rule_id: str) -> Result:
     for result in report.results:
         if result.id == rule_id:
             return result if result.status == "ran" else engine.run_rule(RULES[rule_id], manifest, force=True)
+    if not manifest.problems and rule_id in RULES:
+        # The world does not turn the rule's pack on: a local pack cannot be named from a world
+        # built from scratch. The proof still judges the rule it names.
+        return engine.run_rule(RULES[rule_id], manifest, force=True)
     refusal = Finding("refusal", "the world's manifest is not valid: " + "; ".join(manifest.problems))
     return Result(id=rule_id, gate=rule_id.split("/")[0], promise="", level="enforce", status="ran",
                   verdict=Verdict.REFUSE, findings=(refusal,))

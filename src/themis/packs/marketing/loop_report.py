@@ -64,7 +64,8 @@ def _number(value: Any) -> bool:
 
 def _runs(root: Path) -> list[str]:
     """The lines about agent runs: how many there were, and each one that produced nothing."""
-    runs = sorted(spend.read_receipts(root, "run"), key=lambda run: (str(run.get("at", "")), run["_path"]))
+    runs = sorted(spend.read_receipts(root, spend.AGENT_RUN),
+                  key=lambda run: (str(run.get("at", "")), run["_path"]))
     idle = [run for run in runs if spend.produced_nothing(run)]
     if not runs:
         return ["No agent run is recorded."]
@@ -88,7 +89,8 @@ def build(root: Path, manifest: Manifest, item_paths: Iterable[str]) -> str:
     unit = manifest.table("marketing").get("spend", {}).get("unit")
     spent, uncounted = spend.spend_by_item(root, unit)
     unread = [f"`{path}` is not counted: {problem}" for path, problem in uncounted]
-    unread += [f"`{path}` is not counted: this run receipt cannot be read" for path in receipts.unreadable(root, "run")]
+    unread += [f"`{path}` is not counted: this run receipt cannot be read"
+               for path in receipts.unreadable(root, spend.AGENT_RUN)]
     rows, pairs, estimates, paid, gaps = [], [], [], [], []
     for item in sorted({str(path).strip("/") for path in item_paths}):
         brief = _read(root, f"{item}/brief.toml", items.BRIEF, unread)

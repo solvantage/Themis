@@ -160,14 +160,19 @@ def command_prove(args: argparse.Namespace) -> int:
         if not outcome.held and outcome.detail:
             print(f"       {outcome.detail}")
     failed = [outcome for outcome in outcomes if not outcome.held]
+    from themis.pack import kit
+
+    short = [(loaded.name, problem) for loaded in manifest.packs for problem in kit.problems(loaded)]
     lacking = sorted(rule_id for rule_id in active if proofs.standing(rule_id) != "proven" and (not wanted or rule_id in wanted))
     lacking += [table["id"] for table in manifest.external if proofs.external_standing(table) != "proven"
                 and (not wanted or table["id"] in wanted)]
     print(f"\n {len(outcomes) - len(failed)} of {len(outcomes)} proofs held")
     for name in lacking:
         print(f" unproven: {name}")
-    print("FAIL" if failed else "PASS")
-    return EXIT_FAIL if failed else EXIT_PASS
+    for name, problem in short:
+        print(f" the pack {name} falls short of the pack contract: {problem}")
+    print("FAIL" if failed or short else "PASS")
+    return EXIT_FAIL if failed or short else EXIT_PASS
 
 
 def command_explain(args: argparse.Namespace) -> int:
