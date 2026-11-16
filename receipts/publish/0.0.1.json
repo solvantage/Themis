@@ -1,0 +1,32 @@
+{
+  "package": "themis-guardrails",
+  "version": "0.0.1",
+  "commit": "6240b4cb02069664e92fbbd66d49c2f41fd44fdf",
+  "clean_tree": true,
+  "published_at_utc": "2026-11-16T04:14:56+00:00",
+  "published_at_local": "2026-11-16T11:14:56+07:00",
+  "tests": {
+    "tests": 68,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 68
+  },
+  "artifacts": [
+    {
+      "file": "themis_guardrails-0.0.1-py3-none-any.whl",
+      "sha256": "763a0a661085cda6807290e329f57c569e6230281f407caeb33910a20ea8df2d",
+      "bytes": 2765
+    },
+    {
+      "file": "themis_guardrails-0.0.1.tar.gz",
+      "sha256": "9fe43dd6fd4bf680929091f4eda43a5981b81b711a2060e372558caa7a2be87b",
+      "bytes": 44342
+    }
+  ],
+  "index": "/Users/vtanathip/Repository/Themis/wheelhouse",
+  "tools": {
+    "uv": "uv 0.11.21 (5aa65dd7a 2026-06-11 aarch64-apple-darwin)",
+    "python": "3.13.14"
+  }
+}
