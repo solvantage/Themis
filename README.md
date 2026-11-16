@@ -17,6 +17,7 @@ test count and the line that installs it, is listed in **[RELEASES.md](RELEASES.
 | Read | For |
 | --- | --- |
 | [RELEASES.md](RELEASES.md) | The releases, and how to install the newest |
+| [docs/onboarding.md](docs/onboarding.md) | Getting started in a trading repository: set-up, the daily loop, three scenarios |
 | [DESIGN.md](DESIGN.md) | The core: laws, primitives, core rules, proofs, adoption |
 | [docs/extending.md](docs/extending.md) | Parameters, external checks, local packs, writing a pack |
 | [docs/packs/trading.md](docs/packs/trading.md) | The trading pack |

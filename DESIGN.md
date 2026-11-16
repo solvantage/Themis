@@ -417,7 +417,7 @@ are judgment.
 
 ```markdown
 **Last updated:** 2026-11-16 15:20 local (08:20 UTC). `main` at `a1b2c3d4` (#42).   ← generated
-**Suite:** 1,204 passed, 3 skipped<!--r:suite/a1b2c3d4-->.                      ← from the receipt
+**Suite:** 1,204 pass / 3 skip<!--r:suite/a1b2c3d4-->.                         ← from the receipt
 **Changed:** <one line, written by the agent>
 **Next:** <one line, written by the agent>
 ```
