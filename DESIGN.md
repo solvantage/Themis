@@ -1,7 +1,8 @@
 # Themis — guardrails as code for work done by AI agents
 
-> Design 0.2 — 2026-11-16. Status: **being built**. `themis describe` lists every rule that
-> exists, and whether it is proven. What is released is in [RELEASES.md](RELEASES.md); how a
+> Design 0.2 — 2026-11-16. Status: **built**: the engine, the core, both packs and the Node
+> wrapper. What was designed and is not built is listed in section 18. `themis describe` lists
+> every rule that exists, and whether it is proven. What is released is in [RELEASES.md](RELEASES.md); how a
 > release is made is in [docs/publishing.md](docs/publishing.md).
 
 **In one line:** Themis makes a repository checkable by a machine. Every number has a receipt,
@@ -62,12 +63,12 @@ its field.
 - Themis is not a backtest engine, a data pipeline, a content tool or an agent framework.
 - Themis does not say the work is good. Section 18 states this limit in full.
 
-## 2. Decisions to confirm
+## 2. Decisions
 
-| Decision | Proposal | Why | Fallback |
+| Decision | Chosen | Why | The road not taken |
 | --- | --- | --- | --- |
 | Name | **Themis** | Law, order and the scales. Fits "one standard" and "evidence decides". | Horkos (oath), Aletheia (truth), Ananke (necessity) |
-| Language | **Python core**; thin wrappers for other languages later | The first packs need numpy and pandas. The rules that read files and git work on a repository in any language. | npm-first would shell out to Python for every statistic |
+| Language | **Python, standard library only**; a thin Node wrapper | The rules read files and git, so they work on a repository in any language. The packs' statistics are written out by hand, so installing Themis pulls in nothing else. | npm-first would shell out to Python for every statistic |
 | Format of truth | **Small structured record files; markdown pages are generated views** | Hand-numbered tables collide and drift | Keep hand-written tables, parse them strictly |
 | Distribution | **`themis-guardrails`, published to a local index** | `themis` is taken on PyPI and npm; `themis-guardrails` was free on both on 2026-11-16. A local package that shares a public name can be installed from the public index by mistake. The import and the command stay `themis`. | A private git URL; a public release later |
 | Shape | **Core, packs, manifest** (section 4) | The laws are about claims and evidence, not about any field | One package per field |
@@ -170,8 +171,8 @@ machines read records; the two cannot drift.
 produced it, and its date. When the method later changes in a way that could flip it, every
 citation of the old decision must be marked provisional.
 
-**History is never rewritten.** A rule can bind from a date. Records older than that date sit in
-a closed list that may shrink and never grow.
+**History is never rewritten.** A rule can bind from a date, set with `since`. Work older than
+that date is left as it was written.
 
 ## 7. The lifecycle — one shape, named by the pack
 
@@ -184,9 +185,9 @@ what each must produce.
 
 | Step | Core command | The core refuses when | Trading calls it | Marketing calls it |
 | --- | --- | --- | --- | --- |
-| 1 Log | `themis new` | — | A trial | A topic |
-| 2 Seal | `themis seal` | The plan lacks a field its kind requires | Pre-registration | An approved brief |
-| 3 Do | `themis run` | The seal is not on the main line; the tree is dirty; a guarded action has no grant | A study run | Making pictures and clips |
+| 1 Log | `themis new` | A ledger record of that name already exists | A trial | An item |
+| 2 Seal | None: the plan is merged on its own | The plan lacks a field its kind requires (a pack rule) | Pre-registration | The brief |
+| 3 Do | `themis run <unit> -- <command>` | The seal is not on the main line; the tree is dirty | A study run | Making pictures and clips |
 | 4 Check | `themis attest`, `themis check` | A row is ticked by someone who is not its judge | An independent audit | A frame check; a second reader |
 | 5 Decide | `themis decide` | The evidence is too little to decide | A verdict | Lead, keep or retire |
 | 6 Report | `themis report` | A required part of the report was not produced | A scorecard | A loop report |
@@ -195,26 +196,21 @@ what each must produce.
 The commands are a convenience. **The rules are the law.** `themis check` reads git history and
 the files, so work that skipped the commands is still caught.
 
-Inside the work, the library does the same in code:
-
-```python
-from themis import work
-
-with work.open("2026-11-20_open-drive") as w:   # refuses: no seal on the main line, dirty tree
-    data = w.read("train")                      # a guarded source raises without a grant
-    outcome = do_the_work(data)
-    w.metric("net_ev", outcome.net_ev)          # the only numbers anyone may quote
-    w.decide()                                  # the pack's gate decides; the agent cannot
-```
+Inside the work, a pack's own library guards what the commands cannot. The trading pack's
+`data.window` hands over a sealed window's dates only with an unused grant, and writes the look
+down first. There is no general library for the inside of a run: what a run writes is held by the
+rules afterwards.
 
 ## 8. The core rule catalogue
 
-Forty-four rules in fourteen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
+Forty-five rules in fifteen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
 answer whenever the evidence is missing, unreadable or empty.** A gate that inspected nothing
 never passes.
 
-Each rule can be `off`, `warn` or `enforce`, and can bind from a date. A rule that is off or
-weakened is listed by `themis describe` as **unproven**, so silence is never mistaken for a pass.
+Each rule can be `off`, `warn` or `enforce`, and can bind from a date. Every rule starts at
+`warn`: it runs and is shown, and cannot fail the run. A rule that lacks a setting it needs says
+**not configured** and does not run. `themis describe` counts every rule that is off, not
+configured or unproven, so silence is never mistaken for a pass.
 
 A pack adds its own gates beside these. Packs never weaken a core rule.
 
@@ -230,7 +226,7 @@ A pack adds its own gates beside these. Packs never weaken a core rule.
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
-| `ledger/complete` | No result exists without a ledger record. Every record ends with a result or a stated reason. | Where results live |
+| `ledger/complete` | No result exists without a ledger record, and every ledger record ends with a result or a stated reason. | Where results live |
 | `ledger/count-used` | A decision that depends on how many attempts were made uses the ledger's own count. | Which decisions depend on the count |
 
 ### Gate: decision — the numbers decide
@@ -238,7 +234,7 @@ A pack adds its own gates beside these. Packs never weaken a core rule.
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
 | `decision/issued-by-gate` | The stored decision equals what the gate returns on the work's records. | The gate function |
-| `decision/enough-evidence` | A negative decision states that the evidence was enough. Otherwise the decision is REFUSE: "defer". | What "enough" means |
+| `decision/enough-evidence` | A negative decision states that the evidence was enough, and is otherwise recorded as a refusal. | What "enough" means |
 | `decision/calibrated` | The gate holds a receipt showing it says no to noise and yes to a planted effect. | The noise and the planted case |
 
 ### Gate: claims — no number without a receipt
@@ -247,16 +243,16 @@ A pack adds its own gates beside these. Packs never weaken a core rule.
 | --- | --- | --- |
 | `claims/receipt` | Each number in a governed document cites a record, and matches it. | Which documents and sections are governed |
 | `claims/fresh` | The cited record still verifies against its fingerprint. | — |
-| `claims/dated` | A cited decision carries its number, method version and date; a stale one is marked provisional. | Which method changes can flip which decisions |
-| `claims/links` | Every link and every cited record id resolves. | — |
+| `claims/dated` | A cited decision carries its date and method version, and one that a later method change could flip is marked provisional. | Which method changes can flip which decisions |
+| `claims/links` | Every link and every cited record resolves. | — |
 
 ### Gate: suite — "tests pass" is a receipt, not a sentence
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
-| `suite/receipt-for-tree` | A push or a "done" claim holds a full-suite receipt for the exact tree. | The suite command |
+| `suite/receipt-for-tree` | The exact tree holds a receipt of a full, passing test run. | The suite command |
 | `suite/declared-skips` | Every skipped test is declared with a reason and an end condition. | The declared skips |
-| `suite/attack-files` | Each guarded module has an attack file. Each planted bug names the check that must catch it. | Which modules are guarded |
+| `suite/attack-files` | Each guarded module has an attack file that plants faults in it. | Which modules are guarded |
 
 ### Gate: grant — the owner's yes is a file
 
@@ -270,17 +266,17 @@ A pack adds its own gates beside these. Packs never weaken a core rule.
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
-| `attest/by-judge` | A row is ticked only by the judge it names. An agent never ticks the owner's row. | The judge of each row |
-| `attest/bound` | An attestation names the hash of what was judged. A changed file makes it REFUSE. | — |
-| `attest/independent` | A second reader is not the author and did not use the author's code. | What independence means |
+| `attest/by-judge` | A row is ticked only by the judge it names. | The judge of each row |
+| `attest/bound` | An attestation names the hash of what was judged, and a file that changed since then is refused. | — |
+| `attest/independent` | A second reader is not the author and was not given the author's own work. | What independence means |
 
 ### Gate: scope — each role stays in its lane
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
 | `scope/paths` | A role's pull request changes only the paths that role may change. | The roles and their paths |
-| `scope/no-self-approval` | No role merges or approves its own pull request. | — |
-| `scope/rules-current` | A run records the hash of the rules it read. A stale copy is a REFUSE. | Which files are the rules |
+| `scope/no-self-approval` | No agent merges into the main line. | — |
+| `scope/rules-current` | A run records the hash of the rules it read, and a run on a stale copy is refused. | Which files are the rules |
 | `scope/capabilities` | Tools denied to agents stay denied in the host's settings. | The denied tools |
 
 ### Gate: report — a result a newcomer can read
@@ -289,7 +285,7 @@ A pack adds its own gates beside these. Packs never weaken a core rule.
 | --- | --- | --- |
 | `report/exists` | Finished work has the report its kind requires. | What the report contains |
 | `report/generated` | The report is rebuilt from the work's records and matches. | The report builder |
-| `report/readable` | Each chart has a "how to read this" box. Each abbreviation is expanded where it first appears. | The glossary |
+| `report/readable` | Each chart has a box that says how to read it, and each abbreviation is expanded where it first appears. | The glossary |
 
 ### Gate: handoff — the checkpoint is true and short
 
@@ -298,39 +294,45 @@ A pack adds its own gates beside these. Packs never weaken a core rule.
 | `checkpoint/shape` | The headline and each dated entry stay within their caps. | The caps |
 | `checkpoint/git-true` | The commit named in the headline exists and is on the main line. | — |
 | `checkpoint/suite-receipt` | The suite count cites a receipt for that commit, or is labelled unverified. | — |
-| `checkpoint/pointers` | Each standing trap and each "do not re-propose" line links to its home record. | — |
+| `checkpoint/pointers` | Each standing trap and each closed decision points at its home record. | — |
 
 ### Gate: registry — past lessons stay findable
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
 | `registry/indexed` | Every unit of work appears in the index. | Where work lives |
-| `registry/closed-says-why` | A closed finding states its decision. A "won't fix" names what would reopen it. | — |
-| `registry/graduated` | An issue marked "enforced" names a test that exists. | — |
+| `registry/closed-says-why` | A closed finding states its decision, and a finding left unfixed names what would reopen it. | — |
+| `registry/graduated` | An issue marked enforced names a test that exists. | — |
 
 ### Gate: agents — the agent's own guards are in place
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
-| `agents/hooks-installed` | The shipped hooks are present and unmodified in the host settings. | The host |
-| `agents/instructions-generated` | The rules section of the agent instructions equals what `themis render` writes. | The instructions file |
+| `agents/hooks-installed` | The shipped hooks are present in the host's settings. | The host |
+| `agents/instructions-generated` | The rules section of the agent instructions equals what the rules produce. | The instructions file |
+
+### Gate: views — a generated page is never typed
+
+| Rule | The promise | Supplied by the pack or project |
+| --- | --- | --- |
+| `views/current` | Each generated page equals what its records produce. | Which pages hold a generated block |
 
 ### Gate: external — the project's own checks, held to the same laws
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
-| `external/declared` | Each declared command runs and its exit code maps to a verdict. An unmapped code is a REFUSE. | The command and the mapping |
-| `external/proven` | Each external check has a plant that makes it fail, or is listed as unproven. | The plant |
+| `external/declared` | Each declared command can be started, and no exit code is both a pass and a fail. | The command and the mapping |
+| `external/proven` | Each external check has a plant that makes it fail and an honest case it passes. | The plant |
 
 ### Gate: config — the configuration cannot be quietly weakened
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
-| `config/valid` | The manifest matches its schema. An unknown key, a wrong type or an unknown rule id is a REFUSE, never a silent default. | — |
+| `config/valid` | The manifest matches its schema. An unknown key, a wrong type or an unknown rule id is refused, never defaulted. | — |
 | `config/locked` | A lock file holds the hash of the effective configuration. A manifest that differs from its lock fails. | — |
 | `config/no-silent-weakening` | A change that weakens the configuration reaches the main line only with the owner's grant and a written reason. | Each parameter's stricter direction |
 | `config/protected` | The manifest, the lock, the local pack, the hook settings, the grants and the receipts are changed by no agent role. | Extra protected paths |
-| `config/standard-floor` | A value below the declared standard's floor is listed, and fails when the project sets `strict`. | The standard |
+| `config/standard-floor` | A value below the declared standard's floor is listed, and fails when the project sets strict. | The standard |
 
 ## 9. Receipts and claims — how hallucination is closed off
 
@@ -343,13 +345,13 @@ on which exact tree, and what came out.
 | Receipt | Written by | Makes this sentence checkable |
 | --- | --- | --- |
 | Suite | The pytest plugin, at the end of every run | "The suite passes on this commit" |
-| Lint | A `themis lint` wrapper | "The linter is clean" |
-| Run | `themis run` | "This work ran after its seal, on these inputs" |
+| Run | `themis run` | "This work ran after its seal, on a clean tree" |
 | Calibration | `themis calibrate` | "This gate says no to noise and yes to a planted effect" |
-| Spend | A pack's adapter for a paid tool | "This job cost this much" |
-| Delivery | A host hook on the file-send tool | "The chart was sent to the owner" |
+| Action | The guarded code, through `grants.record_action` | "This action ran on the owner's grant" |
+| Spend | The project's own code, for each paid job | "This job cost this much" |
 
-A hook or a pre-push check then asks for the receipt. It does not re-run a long suite.
+A rule then asks for the receipt: `suite/receipt-for-tree` for the suite, `grant/required` for an
+action. Nothing re-runs a long suite to check a sentence about it.
 
 **Claims.** In a governed document a number is followed by an invisible tag that names its
 record:
@@ -363,10 +365,14 @@ the precision shown. A number with no tag fails. A tag whose record is missing i
 
 The agent does not type the number at all. `themis cite open-drive uplift_half_stop` prints the
 formatted number with its tag, ready to paste. Whole tables are generated blocks between
-`<!-- themis:begin -->` and `<!-- themis:end -->` markers.
+`<!-- themis:begin NAME -->` and `<!-- themis:end NAME -->` markers, written by `themis render`.
 
-**Scope.** Governed text starts narrow: the checkpoint headline and each work's decision
-section. Dates, times, record ids and pull-request numbers are exempt.
+Two more tags point at records: `<!--d:WORK-->` at a decision, and `<!--r:KIND/NAME-->` at a
+receipt. A pack may register a tag of its own, as the marketing pack does for a cost.
+
+**Scope.** Which documents are governed, and which of their sections, is the project's choice:
+`governed` and `sections` on the claims rules. Dates, times, record ids and pull-request numbers
+are exempt.
 
 **Risk.** This is the rule most likely to raise false alarms. It ships at `warn`. It moves to
 `enforce` in a project only after its false-alarm rate has been measured on that project's own
@@ -388,18 +394,21 @@ A **grant** replaces all three.
 | Step | What happens |
 | --- | --- |
 | 1 | The owner runs `themis grant <action> <target>`, with a ceiling when the action spends. |
-| 2 | The shipped hook stops every command that starts with `themis grant` for the owner's click. An exact command name is easy to match and easy to attack-test. |
-| 3 | The command writes a single-use grant file. It is committed, so it is visible in review. |
-| 4 | The guarded code checks the file, marks it spent, and writes a record of the action. |
-| 5 | `grant/required` compares receipts with grants. A guarded action with no grant fails. |
+| 2 | The shipped hook stops every `themis grant` command for the owner's click. An exact command name is easy to match and easy to attack-test. |
+| 3 | The command writes a grant file under `grants/`. It is committed, so it is visible in review. |
+| 4 | The guarded code checks that the grant is for this action and target and is unused, then writes an action receipt that names it. |
+| 5 | `grant/required` compares the receipts with the grants. A guarded action with no grant fails. `grant/single-use` fails a grant named by two actions. |
 
 There is no value an agent can type to open a guarded action. It needs a file that only an
 approved command creates. Which actions are guarded is a pack's or a project's choice.
 
 An **attestation** is the grant's quieter sibling. Some checks need eyes: does the footage look
 right, did a separate reader agree, did the owner sign the plan. Each such row names its judge.
-The attestation records who judged it and the hash of what they judged. An agent can never tick
-a row whose judge is the owner, and an attestation whose file has since changed is a REFUSE.
+The attestation, written by `themis attest`, records the judge, who judged, and the hash of
+the file they judged. A row is ticked only by an attestation made as its judge, and an
+attestation whose file has since changed is a REFUSE. The hook stops `themis attest --judge
+owner` for the owner's click, so an agent cannot attest as the owner. Themis reads the judge an
+attestation names; it cannot see who really looked.
 
 ## 11. The checkpoint
 
@@ -408,17 +417,15 @@ are judgment.
 
 ```markdown
 **Last updated:** 2026-11-16 15:20 local (08:20 UTC). `main` at `a1b2c3d4` (#42).   ← generated
-**Suite:** 1,204 pass / 3 skip<!--r:suite/a1b2c3d4-->, linter clean.               ← from receipts
+**Suite:** 1,204 passed, 3 skipped<!--r:suite/a1b2c3d4-->.                      ← from the receipt
 **Changed:** <one line, written by the agent>
 **Next:** <one line, written by the agent>
 ```
 
-Below the headline, Themis lists what moved since the last checkpoint: new ledger records, new
-decisions, open seals and grants spent. It offers them as bullets. It also proposes which entries
-to roll to the archive, so the file cannot regrow.
-
-An end-of-turn hook can warn when a session added records and the checkpoint does not mention
-them. The handoff then depends on a check, not on memory.
+When the tree has no suite receipt, the second line says so: `unverified — no receipt for this
+tree`. Below the headline sit dated entries, the standing traps and the closed decisions. The
+handoff rules hold their length, the commit the headline names, the suite count, and that each
+trap and decision points at its home record.
 
 ## 12. Proofs — every rule can fail
 
@@ -427,38 +434,34 @@ them. The handoff then depends on a check, not on memory.
 | Proof | How it works | What it shows |
 | --- | --- | --- |
 | **Worlds** | Each rule ships small git repositories built from scratch in a temporary folder, with the answer worked out by hand. Honest histories must pass. Broken ones must breach the named rule. | The rule's logic can say no, with no false alarm |
-| **In your repository** | Themis clones the repository to a temporary folder, plants one fault, runs `themis check`, and discards the clone. | The rule is wired to *your* paths and config |
 | **External checks** | The project's own plant is applied in a clone, and the wrapped command must fail with the expected message. | The project's existing check can say no |
 | **Hooks** | Each shipped hook has a table of commands that must be stopped and commands that must pass, plus planted bugs in the hook's own pattern. | The agent's guards work |
-| **Closed lists** | A closed list's proof adds a new offender and expects a breach. | An exemption does not hide new debt |
-| **Configuration** | In a clone, a rule is switched off with no grant, and `config/no-silent-weakening` must fail. | The guard cannot be turned off quietly |
+| **Configuration** | In a world, a rule is switched off with no grant, and `config/no-silent-weakening` must fail. | The guard cannot be turned off quietly |
 
 Three rules for proofs:
 
 - **Strict.** A proof passes only when the rule it names fails. An unrelated failure does not
   count.
-- **Isolated.** Nothing is planted in the working tree. Themis clones, because its rules read
-  history.
-- **Run in every project.** `themis prove` is part of the standard, so each project shows its
-  own guards work, not only that Themis's tests passed somewhere else.
+- **Isolated.** Nothing is planted in the working tree. A world is built in a temporary folder;
+  an external check's plant is applied to a copy of the repository.
+- **Run in every project.** `themis prove` runs the proofs of every rule the project turns on,
+  and of its external checks, so each project shows its own guards work.
 
 **A pack is admitted only with proofs.** Every rule a pack ships must carry at least one plant
-that fails it and one honest case that passes. `themis prove` refuses a pack that does not.
-
-For a project's own code, `themis.testing` supplies an attack kit: refusal tables, real rows
-corrupted one at a time, and planted bugs run in memory. Each planted bug names the check that
-must catch it.
+that fails it and one honest case that passes. The pack kit checks this, and `themis prove`
+fails a project whose pack falls short.
 
 ## 13. Agent integration — guardrails outside the prompt
 
 | Piece | What it does |
 | --- | --- |
-| `themis hooks install` | Writes the hooks into the host settings: session start, before a tool call, and end of turn. |
-| Before a tool call | Stops delete and remote commands, `themis grant`, and any edit to a protected file, for the owner's click. |
-| End of turn | Runs `themis check --changed` within a 30-second budget, and asks for receipts. |
+| `themis hooks install` | Writes three hooks into the host's settings, `.claude/settings.json`: before a tool call, session start, and end of turn. |
+| Before a tool call | Stops deletes, remote commands, a forced push, `themis grant`, the owner's own `themis decide` and `themis attest`, and any write to a protected file, for the owner's click. |
+| Session start | Remembers which breaches already exist, so old ones do not block new work. |
+| End of turn | Runs `themis check` against the main line. A new breach keeps the turn open. The host gives it 300 seconds. |
 | `--reporter=json` | One object per breach: rule id, location, why the rule exists, and the command that fixes it. |
 | `themis explain <rule>` | The rule's promise, the incident behind it, and a worked fix. |
-| `themis render agents-md` | Writes the rules section of the agent instructions from the catalogue. |
+| `themis render` | Writes the pages listed under `[views]`, and the rules section of the instructions file named under `[agents]`. |
 
 **Deny the capability before writing the rule.** Where a tool can be taken away from an agent,
 take it away; a rule is for what cannot be removed. An agent with no login to a platform cannot
@@ -467,7 +470,7 @@ post there, whatever its instructions say.
 Design rules for the end-of-turn hook:
 
 1. Silent in a folder with no `themis.toml`.
-2. Checks only work changed in this session.
+2. Runs every rule; an external check runs only when its paths changed against the main line.
 3. A blocking exit always carries a reason.
 4. Breaches that existed before the session are warnings, not blocks.
 5. At most three blocks in one turn; then it warns and lets the turn end.
@@ -562,29 +565,36 @@ The full contract, with the pack interface and the pack test kit, is in
 
 | Command | Purpose |
 | --- | --- |
-| `themis init` | Write `themis.toml`, the folders, the hooks and the generated instructions section |
-| `themis describe` | Print every gate, rule and proof; mark the unproven; report conformance to the declared standard |
-| `themis check [--changed]` | Run the rules on the repository |
-| `themis prove` | Run the proofs |
-| `themis new`, `seal`, `run`, `decide`, `report` | The lifecycle (section 7) |
-| `themis grant`, `attest` | The owner's yes; a judge's statement |
-| `themis config diff`, `config lock` | Show what a change tightens and weakens; refresh the lock |
-| `themis checkpoint` | Refresh the handoff |
-| `themis cite`, `render` | Paste a receipted number; regenerate the views |
-| `themis calibrate` | Measure a gate on noise and on a planted effect; write the receipt |
-| `themis explain`, `doctor` | Explain a rule; diagnose a broken setup |
+| `themis init` | Write a starter `themis.toml` and the local `.themis/` folder |
+| `themis describe` | Print every gate, rule and proof; count what is off, not configured or unproven |
+| `themis check [RULE ...] [--changed] [--reporter ...]` | Run the rules on the repository |
+| `themis prove [RULE ...]` | Run the proofs, and hold each turned-on pack to the pack contract |
+| `themis explain RULE` | A rule's promise, the incident behind it, its parameters and its proofs |
+| `themis doctor` | Say what is wrong with the project's setup |
+| `themis new NAME --question ...` | Log a unit of work before it runs: a ledger record, and the folder it will live in |
+| `themis run UNIT -- COMMAND` | Run a unit's work on a clean tree, after its seal; write the run receipt and, with `--input`, the provenance |
+| `themis decide UNIT --gate GATE` | Ask a gate for the decision and store it; `--by owner` records the owner's own call |
+| `themis report UNIT` | Build a unit's report with its pack's builder |
+| `themis grant ACTION [TARGET]`, `themis attest FILE ROW` | The owner's yes; a judge's statement |
+| `themis cite WORK KEY` | Print a number with its tag, ready to paste |
+| `themis checkpoint` | Rewrite the facts in the checkpoint's headline |
+| `themis render [--check]` | Write the generated pages, or fail when one is stale |
+| `themis calibrate` | Measure each gate on noise and on a planted effect; write the receipts |
+| `themis config diff`, `themis config lock` | Show what a change tightens and weakens; refresh the lock |
+| `themis hooks install` | Install the agent hooks |
 
-A pack may add its own names for the same commands.
-
-**pytest plugin.** It ships in the same distribution. It writes the suite receipt, runs the rules
-as test items so they join the project's existing suite, and fails an undeclared skip.
+**pytest plugin.** It ships in the same distribution. In a project with a `themis.toml`, every
+pytest run ends by writing the suite receipt: what ran, on which exact tree, how it ended, and
+whether the run was narrowed. `suite/receipt-for-tree` and `suite/declared-skips` read it.
 
 **Reporters.** Terminal, compact (one line per breach, for editor problem lists), JSON, and
 SARIF (the standard format code-analysis tools exchange).
 
 **Other check runners.** The exit codes and the JSON and SARIF reports are a contract. Any runner
 that can run a command, in any language, can hold Themis as one of its checks and keep REFUSE
-distinct from FAIL. A thin wrapper for a JavaScript project can come later.
+distinct from FAIL. `bridge/node` is that wrapper for a JavaScript project: `themisCheck()`
+runs `themis check --reporter json` and turns anything it cannot read, such as a missing program,
+a crash or a timeout, into REFUSE.
 
 ## 16. Package layout and manifest
 
@@ -592,34 +602,26 @@ distinct from FAIL. A thin wrapper for a JavaScript project can come later.
 Themis/
 ├── pyproject.toml
 ├── src/themis/
-│   ├── records/        schemas, readers, the id scheme
-│   ├── rules/          the engine and the core gates
-│   ├── proofs/         worlds, clones, strict proofs
-│   ├── receipts/       suite, lint, run, calibration
-│   ├── claims/         tags, cite, generated blocks
-│   ├── grants/         grants and attestations
-│   ├── checkpoint/     the handoff
-│   ├── external/       external checks and output parsers
-│   ├── hooks/          host hooks and their attack tables
-│   ├── reporters/      terminal, compact, json, sarif
-│   ├── pack/           the pack interface and the pack test kit
-│   ├── testing/        the attack kit for a project's own code
-│   ├── pytest_plugin.py
-│   ├── cli.py
+│   ├── cli.py            the commands
+│   ├── engine.py         runs the rules; rule.py, verdict.py and schema.py beside it
+│   ├── manifest.py       reads themis.toml strictly; configguard.py locks and classifies it
+│   ├── standards.py      a declared standard and where a project sits below it; roles.py, work.py
+│   ├── records.py        record kinds and their homes; grants.py, receipts.py, claims.py
+│   ├── proofs.py         worlds and plants; external.py runs external checks
+│   ├── hooks.py          the agent hooks; render.py writes the generated pages
+│   ├── checkpoint.py     the handoff; reporters.py, pytest_plugin.py, gitlog.py, paths.py
+│   ├── gates/            the core's fifteen gates
+│   ├── pack/             the pack interface and the pack test kit
 │   └── packs/
-│       ├── trading/    the trading pack
-│       └── marketing/  the marketing content pack
-├── worlds/             proof fixtures
-├── bridge/             thin wrappers for other check runners
-├── scripts/publish.py  the local publish pipeline
-├── receipts/           committed receipts; publish receipts come first
-├── wheelhouse/         the local package index; built files, not committed
+│       ├── trading/      the trading pack
+│       └── marketing/    the marketing content pack
+├── bridge/node/          the wrapper for a JavaScript check runner
+├── scripts/publish.py    the local publish pipeline
+├── receipts/             committed receipts; the publish receipts so far
+├── wheelhouse/           the local package index; built files, not committed
 ├── docs/
 └── tests/
 ```
-
-Built today: `pyproject.toml`, `src/themis/__init__.py`, `src/themis/cli.py`,
-`scripts/publish.py`, the documents and `tests/`. Everything else in the tree is the plan.
 
 A project's manifest. Every value here is the project's own; none is built into Themis.
 
@@ -635,8 +637,7 @@ strict = true                        # fail, not just list, a value below the st
 protected = ["tools/check_*.py"]     # added to the paths no agent role may change
 
 [homes]                              # where this project keeps each kind of record
-work = "research/experiments"
-ledger = "research/trials"
+ledger = "research/trials/*.toml"
 checkpoint = "CHECKPOINT.md"
 
 [views]
@@ -655,6 +656,7 @@ paths = ["content/scripts/**"]
 
 [[checks.external]]                  # a check this project already has
 id = "ext/docs"
+description = "The documents pass the markdown linter"
 command = ["npx", "markdownlint-cli2", "**/*.md"]
 verdicts = { pass = [0], fail = [1] }
 ```
@@ -671,9 +673,9 @@ Adoption is the same path for every project, and it never needs a change to Them
 | 3 | Prove | Adds a plant for each wrapped check, moves rules to `enforce`, declares a standard. | Its guards are shown able to fail |
 | 4 | Replace | Optional. Swaps a wrapped check for the pack's own rule, once the two have agreed. | Less code of its own to keep |
 
-**Agreement before replacement.** A pack rule can be set to shadow an external check. Themis runs
-both on the same tree and reports any difference. A difference is a finding in one of the two. A
-project replaces a check only after the two have agreed for a period it chooses.
+**Agreement before replacement.** Before a project swaps a wrapped check for a pack rule, it
+runs both for a while and compares them by hand. A `shadow` setting that would compare them
+automatically is accepted in the manifest and not built yet (section 18).
 
 **Past records stay as written.** A rule binds from a date. Nothing older is converted, because
 counts, seals and decisions are tied to the commits they were made in.
@@ -682,21 +684,21 @@ counts, seals and decisions are tied to the commits they were made in.
 second project needs the same logic, it moves into a pack. It never moves into the core unless it
 is true in every field.
 
-| Phase | Delivers | Exit test |
-| --- | --- | --- |
-| 0 | Engine, `check`, `describe`, `prove`, exit codes, JSON, pytest plugin, external checks | A wrapped external check and a sample native rule each fail on their plant and name themselves |
-| 1 | The core primitives and their gates; the agent hooks | **Incident replay:** each rule catches its own incident, rebuilt as a world |
-| 2 | The pack interface, the pack test kit, standards and conformance | A pack with a rule that has no proof is refused |
-| 3 | The trading pack | Each gate says no to noise and yes to a planted effect, as measured rates |
-| 4 | The marketing content pack | The same, for its results gate; each rule catches its incident |
-| 5 | A wrapper for another check runner | That runner holds Themis as one check and keeps REFUSE distinct from FAIL |
+| Phase | Delivers | Exit test | State |
+| --- | --- | --- | --- |
+| 0 | Engine, `check`, `describe`, `prove`, exit codes, JSON, pytest plugin, external checks | A wrapped external check and a sample native rule each fail on their plant and name themselves | Built; met |
+| 1 | The core primitives and their gates; the agent hooks | Each rule fails on a planted fault and passes an honest case | Built; met. Each rule's `learned` line names its incident; not every proof rebuilds that exact incident |
+| 2 | The pack interface, the pack test kit, standards and conformance | A pack with a rule that has no proof is refused | Built; met |
+| 3 | The trading pack | Each gate says no to noise and yes to a planted effect, as measured rates | Built; met (see the pack's document for the rates and a known limit) |
+| 4 | The marketing content pack | The same, for its results gate | Built; met |
+| 5 | A wrapper for another check runner | That runner holds Themis as one check and keeps REFUSE distinct from FAIL | Built; met, for Node |
 
 **The genericity test** applies from phase 1 on. Two projects of different shape must adopt with
-a manifest alone. If either needs a change to the core, the core is wrong.
+a manifest alone. If either needs a change to the core, the core is wrong. It has not been run on
+a real project yet.
 
-**Incident replay** is the acceptance test for every rule. Each rule names the incident it exists
-for. Its proof rebuilds that incident as a small world. A rule that cannot catch its own incident
-is not shipped.
+**Incident replay** is the aim for every rule: each rule names the incident it exists for, and
+its proof rebuilds that incident as a small world.
 
 ## 18. What Themis does not prove
 
@@ -706,8 +708,23 @@ is not shipped.
   trust, not a pass. Themis checks the declaration, not the author.
 - **It cannot stop a memory leak.** A belief formed while looking at guarded data is invisible to
   code. The grant makes the look visible; honesty covers the rest.
-- **It cannot confirm a person read something.** A delivery receipt shows a file was sent.
+- **It cannot confirm a person read something.** An attestation says who judged a file, not
+  that they read it.
 - **It sees only what reaches the repository.** What happens inside another tool is invisible
   unless that tool writes a record.
 - **The rules are still a judgment.** Wrong rules will be proven to work, faithfully. Choosing
   what to protect stays with the owner.
+
+### Not built yet
+
+- A `lint` receipt, and a delivery receipt for a file sent to the owner.
+- Proofs planted in a copy of the project's own repository. Native proofs run in worlds built
+  from scratch; only external checks are planted in a copy.
+- Closed lists: a list of old offenders that may shrink and never grow.
+- The `shadow` setting, which would run a pack rule beside an external check and report where
+  they differ. The manifest accepts it, and nothing reads it.
+- An attack kit for a project's own code (`themis.testing`).
+- A checkpoint that lists what moved since the last one, and a hook that warns when a session
+  added records the checkpoint does not mention.
+- A general library for the inside of a run, with a seal check on entry and metrics written
+  through it.

@@ -1,6 +1,6 @@
 # Extending Themis
 
-> Design 0.2 — 2026-11-16. Status: **proposed**. Nothing here is built.
+> 2026-11-16. Status: **built**, apart from what section 6 lists. Every example here runs.
 
 Themis's core names no field and no project. Everything specific is added from outside, through
 four extension points. None of them changes Themis.
@@ -38,8 +38,9 @@ max_age_days = 30
 | Set that allows | A role's paths, allowed tiers, a closed list | Smaller |
 | Set that requires | Governed documents, protected paths, required fields | Larger |
 
-A value with no stricter direction, such as a folder name, is neutral: changing it is neither a
-tightening nor a weakening, but it must still pass `config/valid`.
+A value with no stricter direction, such as a folder name, cannot be classified. Setting it for
+the first time turns a rule on, which is a tightening. Changing it afterwards is treated as a
+weakening, because a path pointed somewhere else can hide what the rule was guarding.
 
 ### Standards
 
@@ -52,14 +53,12 @@ standard = "themis-marketing/1"
 strict = true
 ```
 
-`themis describe` then reports conformance:
+`themis describe` then reports conformance, in its header:
 
 ```text
-Standard: themis-marketing/1
-  35 rules required · 33 at or above the floor · 2 below
-
-  below   evidence/fresh         max_age_days = 45   floor 30
-  below   results/enough-items   min_items = 2       floor 3
+ standard: themis-marketing/1 — deviating in 2 place(s)
+   below   evidence/fresh                   level is warn; the standard requires enforce
+   below   decision/calibrated              min_power = 0.7; the floor is 0.8
 ```
 
 With `strict = true` a value below the floor fails `config/standard-floor`. Without it, the value
@@ -109,28 +108,23 @@ An external check is held to the same laws as a native rule.
 - **REFUSE is never a pass.** The check is REFUSE when the program cannot start, runs past its
   timeout, is stopped by a signal, returns an exit code the mapping does not name, or prints
   output its declared parser cannot read.
-- **It is proven.** A plant edits a file in a clone and the check must then fail, with the
-  expected text in its output. That last part is what keeps the proof strict: the check must fail
+- **It is proven.** A plant edits a file in a copy of the repository, and the check must then
+  fail, with the expected text in its output. That last part is what keeps the proof strict: the check must fail
   for the planted reason, not for any reason.
 - **It is protected.** The files named in `command` join the protected paths, so no agent role
   can edit the script that judges its own work.
 - **It is locked.** The command and the hash of its script are part of the configuration hash.
 
-Parsers shipped with the core: `path-line-message` (lines of `path:line: message`), `junit`,
-`sarif` and `json-lines`. A project that needs another format writes it in a local pack.
+Two parsers ship with the core: `path-line-message` (lines of `path:line: message`) and
+`json-lines` (one JSON object a line). A check whose output is in another format can leave
+`output` unset; its output is then shown as it is.
 
 ### Shadowing
 
-A pack rule can run beside an external check that claims the same promise.
-
-```toml
-[rules."compliance/banned-terms"]
-level = "warn"
-shadow = "ext/content-validator"
-```
-
-Themis runs both on the same tree and reports each difference as a finding. This is how a project
-decides, with evidence, whether to replace its own check with the pack's rule.
+Not built yet. The manifest accepts `shadow = "ext/<id>"` on a rule, so that a pack rule could
+one day run beside an external check that claims the same promise and report where they differ.
+Nothing reads the setting today. Until then a project compares the two by hand before it
+replaces its own check.
 
 ## 3. Local packs
 
@@ -142,54 +136,90 @@ named in the manifest.
 local_pack = "tools/themis_pack"
 ```
 
-A local pack uses the same interface as an installed pack and is held to the same contract,
-proofs included. It is a protected path. If a second project comes to need the same rule, the
+The folder holds an `__init__.py` that defines a module attribute named `pack`, a `Pack`. A
+local pack uses the same interface as an installed pack and is held to the same contract, proofs
+included: `themis prove` runs its proofs and the pack kit. Its folder is a protected path. If a second project comes to need the same rule, the
 rule moves into a pack. It never moves into the core unless it is true in every field.
 
 ## 4. Packs
 
-A pack teaches Themis one field. It must provide six things.
+A pack teaches Themis one field. It can provide these, and a field rarely needs them all.
 
-| A pack provides | What it is |
+| A pack provides | Where it goes |
 | --- | --- |
-| Kinds of work | The shapes work takes in this field, and what each kind must produce |
-| Records | The schemas of the field's facts |
-| Rules | The field's own gates, beside the core's |
-| Gate functions | What "enough evidence to decide" means, and the decisions that can be issued |
-| Adapters | Readers that turn a tool's files into the pack's records |
-| A report | What a finished piece of work must show a newcomer |
+| Its own table in the manifest | `Pack(schema=...)`: unknown keys are refused, as in the core |
+| Kinds of work | `Pack(kinds=...)`: each kind, and what it must produce, for `themis describe` |
+| Records | `records.register(kind, schema, home)` |
+| Rules, with their proofs | `@rule(...)` and `@proof(...)`, with `pack=` set to the pack's name |
+| Gate functions | `@pack.gate(name, version=...)`, each with `@pack.calibration(...)` cases |
+| Defaults for core rules | `pack.defaults`: a function of the manifest |
+| A report | `pack.report`: what `themis report` calls |
+| The inputs of a gate | `pack.inputs[gate]`: builds what the gate reads from the records, so it is never typed |
+| Standards | `pack.standards[id] = Standard(...)` |
 
-The interface, in outline:
+A whole pack, small enough to read at once. It runs as a local pack as it is.
 
 ```python
-from themis.pack import Pack, Param
+from themis.pack import Pack, Standard
+from themis.rule import Param, proof, rule
 
-pack = Pack(name="example", standard="themis-example/1")
-
-
-@pack.rule(
-    "evidence/fresh",
-    promise="Evidence is no older than the window.",
-    params=[Param("max_age_days", int, default=30, stricter="lower", floor=30)],
-)
-def evidence_fresh(ctx, max_age_days):
-    for row in ctx.records("evidence"):
-        if row.retrieved is None:
-            yield ctx.refuse(row, "the row has no retrieved date")
-        elif ctx.age_days(row.retrieved) > max_age_days:
-            yield ctx.breach(row, f"retrieved {row.retrieved}, more than {max_age_days} days ago")
+pack = Pack(name="notes", schema={"file": str})
+pack.standards["notes/1"] = Standard("notes/1", levels={"notes/short": "enforce"},
+                                     floors={"notes/short": {"max_lines": 50}})
 
 
-@pack.proof("evidence/fresh")
-def a_stale_row_is_caught(world):
-    world.plant(record="evidence/e1", set={"retrieved": world.days_ago(31)})
-    world.expect_breach("evidence/fresh")
+@rule("notes/short", "The notes file stays short.", pack="notes",
+      params=(Param("max_lines", int, 50, "lower", "the most lines the notes may hold"),),
+      learned="A notes file grew until nobody read it.")
+def short(ctx):
+    name = ctx.manifest.table("notes").get("file") or "NOTES.md"
+    text = ctx.read(name)
+    if text is None:
+        ctx.refuse(f"there is no {name}", fix=f"write {name}")
+        return
+    ctx.inspect()
+    if len(text.splitlines()) > ctx.param("max_lines"):
+        ctx.breach("the notes are too long", where=name, fix="move old entries to an archive")
 
 
-@pack.proof("evidence/fresh")
-def a_fresh_row_passes(world):
-    world.expect_pass("evidence/fresh")
+@proof("notes/short", "a short file", expect="pass")
+def _(world):
+    world.write("NOTES.md", "one line\n")
+
+
+@proof("notes/short", "a file past the limit", expect="fail", contains="too long")
+def _(world):
+    world.write("NOTES.md", "a line\n" * 51)
+
+
+@pack.gate("keep", version="1")
+def keep(metrics):
+    if not isinstance(metrics.get("score"), (int, float)):
+        return {"decision": "defer", "verdict": "refuse", "enough_evidence": False,
+                "reason": "no score", "numbers": {}}
+    yes = metrics["score"] > 1
+    return {"decision": "keep" if yes else "drop", "verdict": "pass" if yes else "fail",
+            "enough_evidence": True, "reason": f"the score is {metrics['score']}", "numbers": metrics}
+
+
+@pack.calibration("keep", "noise", "a score of zero")
+def _():
+    return float(keep({"score": 0})["verdict"] == "pass")
+
+
+@pack.calibration("keep", "planted", "a score of two")
+def _():
+    return float(keep({"score": 2})["verdict"] == "pass")
 ```
+
+What a rule may do with `ctx`: read files (`ctx.read`, `ctx.exists`, `ctx.files`), records
+(`ctx.records`), git history (`ctx.git`), the manifest and its own parameters (`ctx.param`). It
+says what it found with `ctx.inspect()`, `ctx.breach(...)`, `ctx.refuse(...)` and
+`ctx.not_configured(...)`. A rule that inspected nothing is a REFUSE, whatever else it said.
+
+A proof builds a small repository from scratch in `world`: `write`, `remove`, `move`,
+`manifest`, and git with `commit`, `branch`, `checkout`, `merge` and `pull_request`. The proof
+holds only when the rule reaches the expected verdict, and, with `contains`, for that reason.
 
 An installed pack is found through a Python entry point named `themis.packs`.
 
@@ -218,42 +248,44 @@ every field, and belongs in the core for all packs, or the core has let a field 
 
 ### The pack test kit
 
-`themis.pack.kit` checks a pack against the contract. `themis prove` runs it and refuses a pack
-that fails.
+`themis.pack.kit` checks a pack against the contract, and `themis prove` fails a project whose
+pack falls short.
 
 | The kit requires | Why |
 | --- | --- |
-| Every rule has a one-line promise | `themis describe` and the generated instructions are built from it |
-| Every rule has a plant that fails it and an honest case that passes | Law 6 |
-| Every parameter declares its type, default and stricter direction | So weakening can be detected |
-| A rule that inspects nothing returns REFUSE | Law 4 |
-| A rule only reads; it writes nothing and reaches nothing it did not declare | A check must not change what it checks |
-| No rule id repeats a core rule's id | A pack adds gates; it never replaces one |
-| Every gate function holds a calibration: it says no to noise and yes to a planted effect | A gate that cannot say no has not earned a yes |
-| The pack's source names no project | A pack serves a field |
+| Every rule's promise is one full sentence | `themis describe` and the generated instructions are built from it |
+| Every rule has a planted fault that fails it and an honest case that passes | Law 6 |
+| Every parameter has a line of help, and a stricter direction Themis knows | So a weakening can be detected |
+| Every standard names rules and parameters that exist, and a floor only where a direction is known | A floor must mean something |
+| Every gate function has a version, a noise case and a planted case | A gate that cannot say no has not earned a yes |
+
+Two more hold without the kit. The engine turns a rule that inspected nothing into a REFUSE, and
+a rule id can be registered only once, so a pack cannot replace a core rule. A test in this
+repository keeps project names out of every file, the packs included.
 
 ### Adapters
 
-An adapter reads one tool's output into a pack's records. It is where the outside world meets the
-pack, so it follows three rules: it validates before it trusts, it refuses what it cannot read,
-and it never guesses a missing value.
+An adapter reads one tool's output into a pack's records. Themis ships none for any one tool:
+that code belongs to the project, or to a pack for that tool's field. A pack ships the pieces an
+adapter is built from, such as the trading pack's `trades.from_rows`, which maps any engine's
+column names onto the standard trade table. An adapter follows three rules: it validates before
+it trusts, it refuses what it cannot read, and it never guesses a missing value.
 
-```toml
-[adapters.results]
-reader = "csv"
-path = "results/*.csv"
-map = { id = "item", views = "views", follows = "new_followers" }
-```
-
-Common readers (`csv`, `json`, `junit`) ship with the core. A reader for one tool's own format
-ships with the pack that needs it.
+The manifest has an `[adapters]` table, which a pack may read for its adapters' settings. No
+shipped pack reads it yet.
 
 ## 5. What an extension may not do
 
 | Not allowed | Because |
 | --- | --- |
 | Lower a core rule's level from inside a pack | Only a project's manifest sets levels, and weakening needs the owner |
-| Ship a rule with no proof | An unproven rule is listed as unproven and cannot be enforced |
+| Ship a rule with no proof | The pack kit refuses it, and `themis describe` lists the rule as unproven |
 | Put logic in the manifest | Values are declarative so that changes can be compared mechanically |
 | Name a project in a pack, or a field in the core | Each layer must be usable by the next project without change |
 | Change the work it checks | A check reads; only the lifecycle commands write |
+
+## 6. Not built yet
+
+- The `shadow` setting (section 2).
+- Readers for `[adapters]`, and any adapter for one tool's format.
+- A parser for test-runner or code-analysis output beyond the two in section 2.
