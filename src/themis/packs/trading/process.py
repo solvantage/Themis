@@ -1,0 +1,507 @@
+"""Gates: trials, prereg and holdout — how a study is counted, planned and shown unseen data.
+
+    trials    each settings version that ran is a logged trial, and a figure adjusted for luck is
+              adjusted for every trial in the ledger
+    prereg    the plan is complete before the answer is known, and every result says what made it
+    holdout   a sealed window is read with a grant, and each look at it is a record
+
+A trial is a core ledger record whose `work` is the study's folder; its `variants` says how many
+variants it covers, 1 when it states none. A look is one read of a sealed data window, written by
+`themis.packs.trading.data.window`. Each rule's proofs are a table: what the world shows, the
+verdict the rule must reach, text the finding must hold, and what the world's builder is given.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import json
+import string
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+from themis import records
+from themis.packs.trading import data, units
+from themis.rule import Context, Param, proof, rule
+from themis.schema import Choice, Required
+
+if TYPE_CHECKING:
+    from themis.proofs import World
+
+records.register("look", {
+    "window": Required(str), "kind": Required(Choice(*data.KINDS)), "at": Required(str), "study": str,
+    "grant": str, "scope": str, "purpose": str, "compared_against": str, "forward_returns": bool,
+}, "looks/*.toml")
+
+ADJUSTED, COUNTED = "luck_adjusted_sharpe", "trials_counted"
+HISTORY = Param("history", str, "results/run-history.csv", None, "the run-history file inside a study, a row a run")
+COLUMN = Param("settings_column", str, "settings_id", None, "the run-history column that names each run's settings")
+PENALTY = Param("penalty", int, 0, "higher", "extra trials added to the ledger's count, for choices nobody logged")
+SETUP = """
+    [project]
+    packs = ["trading"]
+    [trading]
+    work = "work/*"
+    windows.train = {from = "2015-01-01", to = "2021-12-31"}
+    [trading.windows.holdout]
+    from = "2022-01-01"
+    to = "2024-12-31"
+    sealed = true
+"""
+
+
+def _text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _whole(value: Any) -> bool:
+    """True for a whole number. True and false are not numbers, and 3.0 is as whole as 3."""
+    return not isinstance(value, bool) and (isinstance(value, int) or (isinstance(value, float) and value.is_integer()))
+
+
+def _hex(value: Any, shortest: int, longest: int) -> bool:
+    return isinstance(value, str) and shortest <= len(value) <= longest and set(value) <= set(string.hexdigits)
+
+
+#: A field a seal or a provenance file states -> (whether a value will do, what it must be, what it is for).
+FIELDS = {
+    "binding": (_text, "text", "the one clause that decides the study"),
+    "gate": (_text, "text", "the gate function that issues the verdict"),
+    "nulls": (lambda v: isinstance(v, list) and bool(v), "a list with an entry", "the nulls the idea must beat"),
+    "windows": (lambda v: isinstance(v, list) and bool(v), "a list with an entry", "the data windows the study reads"),
+    "mde": (lambda v: type(v) in (int, float) and v > 0, "a number above 0", "the smallest effect worth seeing"),
+    "iterations": (lambda v: _whole(v) and v > 0, "a whole number above 0", "how many settings may be tried"),
+    "risk_rules": (_text, "text", "the risk rules every setting must obey"),
+    "commit": (lambda v: _hex(v, 7, 40), "7 to 40 hex characters", "the commit the run was made on"),
+    "clean": (lambda v: v is True, "true", "a fingerprint taken on a dirty tree pins nothing"),
+    "inputs": (lambda v: isinstance(v, dict) and bool(v) and all(_hex(item, 64, 64) for item in v.values()),
+               "a table that gives each input's path a sha256 of 64 hex characters", "what the run read"),
+}
+TESTED = ("binding", "gate", "nulls", "windows", "mde")  # NEEDS: what the seal of each kind of study must state
+NEEDS = {"strategy": TESTED, "signal": TESTED, "data": (), "tune": ("windows", "gate", "iterations", "risk_rules")}
+SEAL_FIX = "state it in the seal's frontmatter; a seal already merged changes only through an amendment record"
+RERUN = "run the study again on a clean tree; the run writes the commit, clean = true and a sha256 for each input"
+
+
+def _unstated(held: dict[str, Any], fields: tuple[str, ...], what: str) -> list[str]:
+    """Each needed field that is missing, or is not what it must be, in plain words."""
+    found = []
+    for field in fields:
+        fits, shape, purpose = FIELDS[field]
+        if field not in held:
+            found.append(f"the {what} does not state {field}: {purpose}")
+        elif not fits(held[field]):
+            found.append(f"{field} in the {what} must be {shape}: {purpose}")
+    return found
+
+
+def _variants(ctx: Context, rows: list[Any]) -> int | None:
+    """How many trials these ledger records count for. None, with a refusal, when one cannot be read."""
+    unread = [row for row in rows if not _whole(row.get("variants", 1)) or row.get("variants", 1) < 1]
+    for row in unread:
+        ctx.refuse("this trial's variants is not a whole number, 1 or more", where=row.path,
+                   fix="write variants as a whole number: how many variants the trial covers")
+    return None if unread else int(sum(row.get("variants", 1) for row in rows))
+
+
+def _table(fields: dict[str, Any]) -> str:
+    """A flat TOML table for a proof world. A field set to None is left out."""
+    return "".join(f"{key} = {json.dumps(value)}\n" for key, value in fields.items() if value is not None)
+
+
+def _prove(rule_id: str, build: Callable[..., None], cases: list[tuple[str, str, str | None, dict[str, Any]]]) -> None:
+    """Register one proof for each case. A case's `files` are written after its world is built."""
+    for name, expect, contains, given in cases:
+        @proof(rule_id, name, expect=expect, contains=contains)
+        def _(world: World, given: dict[str, Any] = given) -> None:
+            build(world, **{key: value for key, value in given.items() if key != "files"})
+            for path, text in given.get("files", {}).items():
+                world.write(path, text)
+
+
+# -- trials/settings-counted --------------------------------------------------------------------
+
+
+def _versions(ctx: Context, path: str, column: str) -> dict[str, int] | None:
+    """Each settings version in a run history, with the line it first ran on: a run that names none
+    is a version of its own. None, with a refusal, when the history cannot be read."""
+    text, found, problem = ctx.read(path), {}, None
+    try:
+        reader = csv.DictReader(io.StringIO(text or ""), strict=True)
+        if text is None or column not in (reader.fieldnames or []):
+            problem = "is not text" if text is None else f"has no column named {column}"
+        for row in reader if problem is None else []:
+            found.setdefault((row.get(column) or "").strip(), reader.line_num)
+    except csv.Error as error:
+        problem = f"cannot be read as CSV ({error})"
+    if problem:
+        ctx.refuse(f"the run history {problem}", where=path,
+                   fix=f"write the run history as CSV, with a header row that holds the column {column}")
+    return None if problem else found
+
+
+@rule("trials/settings-counted", "Each new settings version in the run history is a counted trial.", pack="trading",
+      params=(HISTORY, COLUMN),
+      learned="A grid of settings ran with nothing logged, so the best run looked like the only one tried.")
+def settings_counted(ctx: Context) -> None:
+    studies, logged = units.studies(ctx), units.trials(ctx)
+    for unit, files in sorted(studies.items()):
+        path = f"{unit}/{ctx.param('history').strip('/')}"
+        if path not in files:
+            continue
+        ctx.inspect()
+        versions = _versions(ctx, path, ctx.param("settings_column"))
+        folder = unit.rsplit("/", 1)[-1]  # a ledger record may name its study by folder name alone
+        rows = logged.get(unit, []) + (logged.get(folder, []) if folder != unit else [])
+        if not rows:
+            ctx.breach("this study has a run history and no trial in the ledger", where=path,
+                       fix="log the study in the ledger, with the variants it covers, and say why the record is late")
+            continue
+        counted = _variants(ctx, rows)
+        if versions is not None and counted is not None and len(versions) > counted:
+            ctx.breach(f"the run history holds {len(versions)} settings versions, but the ledger counts {counted} for "
+                       "this study", where=path, line=sorted(versions.values())[counted],
+                       fix="log each settings version before it runs: raise the trial's variants, or add a trial")
+
+
+def _history(world: World, runs: str = "s1 s2 s3", trials: tuple[dict[str, Any], ...] = ({"variants": 3},),
+             column: str = "settings_id") -> None:
+    """A study whose run history holds one run for each settings version named, and its ledger records."""
+    world.manifest(SETUP)
+    rows = "".join(f"{number},{version}\n" for number, version in enumerate(runs.split(), start=1))
+    world.write("work/a/results/run-history.csv", f"run,{column}\n{rows}")
+    for number, fields in enumerate(trials, start=1):
+        world.write(f"ledger/t{number}.toml", _table({"work": "work/a", **fields}))
+
+
+_prove("trials/settings-counted", _history, [
+    ("three settings versions, and a trial that covers three variants", "pass", None, {}),
+    ("the same settings run again is not a new version", "pass", None, {"runs": "s1 s1 s2 s3 s1"}),
+    ("two trials add up, and one states no variants", "pass", None, {"trials": ({"variants": 2}, {"work": "a"})}),
+    ("a run with new settings and no trial for it", "fail", "but the ledger counts 2", {"trials": ({"variants": 2},)}),
+    ("a trial for another study does not count here", "fail", "no trial in the", {"trials": ({"work": "work/b"},)}),
+    ("a run history with no settings column", "refuse", "has no column named settings_id", {"column": "preset"}),
+    ("a run history that is not CSV", "refuse", "cannot be read as CSV", {"runs": '"s1'}),
+    ("a trial whose variants is not a number", "refuse", "not a whole number", {"trials": ({"variants": "a few"},)}),
+])
+
+
+# -- trials/count-feeds-adjustment --------------------------------------------------------------
+
+
+@rule("trials/count-feeds-adjustment", "The luck-adjusted figure uses the ledger's own count of trials.",
+      pack="trading", params=(PENALTY,),
+      learned="A figure was adjusted for the few trials of its own study, while the ledger held many more.")
+def count_feeds_adjustment(ctx: Context) -> None:
+    paths = [f"{unit}/{units.METRICS}" for unit in sorted(units.studies(ctx))]
+    held = {path: metrics.get(COUNTED) for path in paths if ADJUSTED in (metrics := units.read_json(ctx, path) or {})}
+    if not held:
+        return
+    ctx.inspect(len(held))
+    rows = [row for found in units.trials(ctx).values() for row in found]
+    if not rows:
+        ctx.refuse("the ledger holds no trial that can be read, so the trials cannot be counted",
+                   fix="log every trial in the ledger before a figure is adjusted for their number")
+        return
+    if _variants(ctx, rows) is None:
+        return
+    penalty = max(ctx.param("penalty") or 0, 0)
+    extra = f", plus a penalty of {penalty}" if penalty else ""
+    for path, stated in held.items():
+        counted = int(sum(row.get("variants", 1) for row in _ledger_at(ctx, path, rows)))
+        if not _whole(stated):
+            ctx.breach(f"the metrics hold {ADJUSTED} and no whole number under {COUNTED}", where=path,
+                       fix=f"compute the figure with the ledger's count, {counted}{extra}, and record it as {COUNTED}")
+        elif stated < counted + penalty:
+            ctx.breach(f"the luck-adjusted figure used a trial count of {int(stated)}, but the ledger counts "
+                       f"{counted}{extra}", where=path,
+                       fix="compute the figure again with the ledger's own count; every logged trial counts")
+
+
+def _ledger_at(ctx: Context, path: str, rows: list[Any]) -> list[Any]:
+    """The trials the ledger held when this metrics file was last committed.
+
+    A figure is adjusted for the trials that were logged when it was computed, and a trial logged
+    later does not make it wrong. A metrics file that is new, or that changed since its last commit,
+    is being written now, so it answers to the whole ledger. A trial counts for the variants its
+    record states today.
+    """
+    commit = (ctx.git.run("log", "-1", "--format=%H", "--", path) or "").strip()
+    if not commit or path in ctx.git.dirty():
+        return rows
+    held = set((ctx.git.run("ls-tree", "-r", "-z", "--name-only", commit) or "").split("\0"))
+    return [row for row in rows if row.path in held]
+
+
+def _adjusted(world: World, counted: Any = 4, ledger: tuple[Any, ...] = (3, None), extra: str = "",
+              later: int = 0, edited: bool = False) -> None:
+    """A study whose metrics hold a luck-adjusted figure and its count, and a ledger of three variants and one.
+
+    `later` commits the study, then logs that many more trials. `edited` then changes the metrics file.
+    """
+    world.manifest(SETUP + extra)
+    for name, variants in zip("ab", ledger):
+        world.write(f"ledger/{name}.toml", _table({"work": f"work/{name}", "variants": variants}))
+    world.write("work/a/results/metrics.json", json.dumps({ADJUSTED: 0.8} | ({COUNTED: counted} if counted else {})))
+    if later:
+        world.commit("the study, and the ledger as it stood")
+        for number in range(later):
+            world.write(f"ledger/later-{number}.toml", _table({"work": "work/c"}))
+        world.commit("trials logged after the figure")
+    if edited:
+        world.write("work/a/results/metrics.json", json.dumps({ADJUSTED: 0.9, COUNTED: counted}))
+
+
+_prove("trials/count-feeds-adjustment", _adjusted, [
+    ("the figure used the ledger's count", "pass", None, {}),
+    ("a count above the ledger's is not a breach", "pass", None, {"counted": 9}),
+    ("metrics with no luck-adjusted figure need no count", "pass", None,
+     {"files": {"work/b/results/metrics.json": '{"net_return": 0.12}\n'}}),
+    ("a figure that counted only its own study", "fail", "a trial count of 3, but the ledger counts 4", {"counted": 3}),
+    ("a figure with no count beside it", "fail", "no whole number under trials_counted", {"counted": None}),
+    ("the ledger's count, short of the project's penalty", "fail", "the ledger counts 4, plus a penalty of 2",
+     {"extra": '\n    [rules."trials/count-feeds-adjustment"]\n    penalty = 2\n'}),
+    ("an empty ledger cannot be counted", "refuse", "the ledger holds no trial", {"ledger": ()}),
+    ("a trial logged after the figure was committed does not make it wrong", "pass", None, {"later": 3}),
+    ("a committed figure still answers to the ledger of its day", "fail", "a trial count of 3, but the ledger counts 4",
+     {"counted": 3, "later": 3}),
+    ("a figure computed again answers to the whole ledger", "fail", "a trial count of 4, but the ledger counts 7",
+     {"later": 3, "edited": True}),
+])
+
+
+# -- prereg/declared ----------------------------------------------------------------------------
+
+
+@rule("prereg/declared", "The seal names its kind, its binding clause, its gate, its nulls, its windows and the "
+      "smallest effect worth seeing.", pack="trading",
+      learned="A plan was sealed with no bar in it, and the bar was chosen after the results were in.")
+def declared(ctx: Context) -> None:
+    windows = units.windows(ctx)
+    for unit, files in sorted(units.studies(ctx).items()):
+        found = units.seal(ctx, unit, files)
+        if found is None:
+            continue  # not sealed yet, or a seal that cannot be read, which is refused
+        ctx.inspect()
+        path, plan = found
+        kind = plan.get("kind")
+        if not isinstance(kind, str) or kind not in NEEDS:
+            said = "names no kind" if kind is None else f"names the kind {kind!r}"
+            ctx.breach(f"the seal {said}; a kind is strategy, signal, data or tune", where=path, fix=SEAL_FIX)
+            continue
+        for fault in _unstated(plan, NEEDS[kind], f"seal of this {kind} study"):
+            ctx.breach(fault, where=path, fix=SEAL_FIX)
+        named = plan.get("windows") if "windows" in NEEDS[kind] else None
+        for name in named if isinstance(named, list) else []:
+            if str(name) not in windows:
+                ctx.breach(f"the seal names the window {name}, which the manifest does not declare", where=path,
+                           fix="name a window declared under [trading.windows], or declare this one there")
+
+
+def _sealed(world: World, file: str = "PRE-REG.md", fence: str = "---", **changes: Any) -> None:
+    """A study whose seal states all a strategy needs, apart from the changes. None leaves a field out."""
+    fields = {"kind": "strategy", "binding": "the net figure beats the shuffled null in the test window",
+              "gate": "direction", "nulls": "[shuffled, always-long, always-short]", "windows": "[train, holdout]",
+              "mde": 0.2, **changes}
+    lines = [f"{key}: {value}" for key, value in fields.items() if value is not None]
+    world.manifest(SETUP)
+    world.write(f"work/a/{file}", "\n".join([fence, *lines, fence, "", "The plan, in words.", ""]))
+
+
+BARE = {"binding": None, "gate": None, "nulls": None, "windows": None, "mde": None}
+TUNE = {"kind": "tune", "binding": None, "nulls": None, "mde": None, "iterations": 50, "risk_rules": "rules/risk.json"}
+_prove("prereg/declared", _sealed, [
+    ("a strategy seal that states its whole plan", "pass", None, {}),
+    ("a data study states its kind and nothing more", "pass", None, {"kind": "data", **BARE}),
+    ("a tune seal with its windows, gate, budget and risk rules", "pass", None, TUNE),
+    ("a seal that names no kind", "fail", "names no kind", {"kind": None}),
+    ("a kind that is not one of the four", "fail", "names the kind 'backtest'", {"kind": "backtest"}),
+    ("a strategy seal with no binding clause", "fail", "does not state binding", {"binding": None}),
+    ("a signal seal with no gate", "fail", "this signal study does not state gate", {"kind": "signal", "gate": None}),
+    ("a list of nulls that is empty", "fail", "nulls in the seal of this strategy study must be", {"nulls": "[]"}),
+    ("a window the manifest does not declare", "fail", "names the window live, which", {"windows": "[train, live]"}),
+    ("a smallest effect of zero", "fail", "mde in the seal of this strategy study must be", {"mde": 0}),
+    ("a tune seal with no iteration budget", "fail", "does not state iterations", {**TUNE, "iterations": None}),
+    ("a tune budget of two and a half", "fail", "study must be a whole number above 0", {**TUNE, "iterations": 2.5}),
+    ("a seal with no frontmatter block", "refuse", "no frontmatter block", {"fence": ""}),
+    ("no study is sealed yet", "refuse", "nothing was inspected", {"file": "notes.md"}),
+])
+
+
+# -- prereg/provenance --------------------------------------------------------------------------
+
+
+@rule("prereg/provenance", "Every result carries a fingerprint taken on a clean tree.", pack="trading",
+      learned="A study stopped reproducing itself, and nothing said which code and data had made its numbers.")
+def provenance(ctx: Context) -> None:
+    for unit, files in sorted(units.studies(ctx).items()):
+        if not units.has_results(unit, files):
+            continue
+        ctx.inspect()
+        path = f"{unit}/{units.PROVENANCE}"
+        if not ctx.exists(path):
+            ctx.breach("this study holds results and no provenance file", where=unit, fix=RERUN)
+            continue
+        held = units.read_json(ctx, path)  # None is a file that cannot be read, which is refused
+        for fault in _unstated(held, ("commit", "clean", "inputs"), "provenance") if held is not None else []:
+            ctx.breach(fault, where=path, fix=RERUN)
+
+
+def _ran(world: World, file: str = "provenance.json", **changes: Any) -> None:
+    """A study with a result and its provenance, apart from the changes. None leaves a field out."""
+    held = {"commit": "0a1b2c3d4e5f", "clean": True, "inputs": {"data/bars.csv": "ab" * 32}, **changes}
+    world.manifest(SETUP)
+    world.write("work/a/results/metrics.json", '{"net_return": 0.12}\n')
+    world.write(f"work/a/results/{file}", json.dumps({key: value for key, value in held.items() if value is not None}))
+
+
+_prove("prereg/provenance", _ran, [
+    ("a result with its commit, a clean tree and its inputs' hashes", "pass", None, {}),
+    ("a sealed study with no result yet needs no fingerprint", "pass", None,
+     {"files": {"work/b/PRE-REG.md": "---\nkind: data\n---\n"}}),
+    ("results with no provenance file", "fail", "no provenance file", {"file": "notes.json"}),
+    ("results made on a dirty tree", "fail", "a fingerprint taken on a dirty tree pins nothing", {"clean": False}),
+    ("no clean-tree flag at all", "fail", "does not state clean", {"clean": None}),
+    ("a commit that is a word, not a hash", "fail", "commit in the provenance must be", {"commit": "latest"}),
+    ("an empty table of inputs", "fail", "inputs in the provenance must be a table", {"inputs": {}}),
+    ("an input with no hash", "fail", "a sha256 of 64 hex characters", {"inputs": {"data/bars.csv": "to do"}}),
+    ("a provenance file that cannot be read", "refuse", "not valid JSON",
+     {"files": {"work/a/results/provenance.json": '{"commit": \n'}}),
+])
+
+
+# -- holdout/guarded ----------------------------------------------------------------------------
+
+
+def _windows(ctx: Context) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """The declared data windows, and the names of the sealed ones. Stops the rule when none is sealed."""
+    found = units.windows(ctx)
+    sealed = sorted(name for name, window in found.items() if data.is_sealed(window))
+    if not sealed:
+        ctx.not_configured("mark a data window as sealed: sealed = true under [trading.windows.<name>]")
+    return found, sealed
+
+
+def _looks(ctx: Context) -> list[Any]:
+    """The look records, oldest first."""
+    return sorted(ctx.records("look"), key=lambda look: (look.get("at"), look.path))
+
+
+@rule("holdout/guarded", "A window marked sealed is read only with a grant.", pack="trading",
+      learned="Sealed data was read by agents whose instructions never mentioned the seal.")
+def guarded(ctx: Context) -> None:
+    windows, sealed = _windows(ctx)
+    grants, looks = {record.id: record for record in ctx.records("grant")}, _looks(ctx)
+    spent = data.first_uses(looks)  # a grant is spent by the first look that names it
+    for look in looks:
+        name, grant = look.get("window"), (look.get("grant") or "").strip() or None
+        if name in windows and name not in sealed:
+            continue  # a window that is not sealed needs no grant
+        ctx.inspect()
+        if name not in windows:
+            ctx.breach(f"this look names the window {name}, which the manifest does not declare", where=look.path,
+                       fix="name a window declared under [trading.windows], or declare this one there")
+            continue
+        earlier = spent.get(grant) if spent.get(grant) != look.path else None
+        problem = data.grant_problem(grants, grant, name, earlier)
+        if problem:
+            ctx.breach(f"this look read the sealed window {name} with no grant that opens it: {problem}",
+                       where=look.path, fix=f"tell the owner the window was read; before each look the owner runs "
+                                            f"`themis grant {data.ACTION} {name} --reason ...`, and the look goes "
+                                            "through data.window")
+
+
+GRANT = {"action": "holdout", "target": "holdout", "granted_by": "owner", "granted_at": "2026-01-01T09:00:00+00:00",
+         "reason": "the plan is sealed and both test windows are done"}
+TWO = {"looks": ({}, {}), "grants": ({}, {})}  # a second look, with a grant of its own
+PIPELINE = {"kind": "pipeline", "scope": "the first 50 rows", "purpose": "show the loader reads the sealed files",
+            "compared_against": "the row counts in the data inventory", "forward_returns": False}
+
+
+def _holdout(world: World, looks: tuple[dict[str, Any], ...] = ({},), grants: tuple[dict[str, Any], ...] = ({},),
+             extra: str = "") -> None:
+    """A sealed window, grants g1, g2, ... for it, and looks l1, l2, ..., a day apart. Look n is a signal
+    look that names grant n. Each record is that honest one, apart from the changes given."""
+    world.manifest(SETUP + extra)
+    for number, changes in enumerate(grants, start=1):
+        world.write(f"grants/g{number}.toml", _table({**GRANT, **changes}))
+    for number, changes in enumerate(looks, start=1):
+        look = {"window": "holdout", "kind": "signal", "at": f"2026-01-0{number + 1}T10:00:00+00:00",
+                "grant": f"g{number}", **changes}
+        world.write(f"looks/l{number}.toml", _table(look))
+
+
+_prove("holdout/guarded", _holdout, [
+    ("a look at a sealed window with the owner's grant for it", "pass", None, {}),
+    ("a look at an open window needs no grant", "pass", None, {"looks": ({}, {"window": "train", "grant": None})}),
+    ("a second look with a grant of its own", "pass", None, {**TWO, "looks": ({}, {"kind": "pipeline"})}),
+    ("a sealed window read with no grant", "fail", "no grant is named", {"looks": ({"grant": None},)}),
+    ("a look that names a grant nobody wrote", "fail", "no grant with the id g9", {"looks": ({"grant": "g9"},)}),
+    ("a grant for another action", "fail", "for the action publish, not holdout", {"grants": ({"action": "publish"},)}),
+    ("a grant for another window", "fail", "is for the target train, not holdout", {"grants": ({"target": "train"},)}),
+    ("one grant used for two looks", "fail", "g1 was already used by the look", {"looks": ({}, {"grant": "g1"})}),
+    ("a look at a window nobody declared", "fail", "the manifest does not declare", {"looks": ({"window": "live"},)}),
+    ("a look record that cannot be read", "refuse", "is not valid TOML", {"files": {"looks/l2.toml": 'window = "x\n'}}),
+    ("nobody has looked at a sealed window yet", "refuse", "nothing was inspected", {"looks": ()}),
+])
+
+
+# -- holdout/one-signal-look --------------------------------------------------------------------
+
+
+@rule("holdout/one-signal-look", "Each sealed window has at most its allowed number of signal looks.", pack="trading",
+      learned="Settings were tried on the unseen years again and again until they passed, and then lost.")
+def one_signal_look(ctx: Context) -> None:
+    windows, sealed = _windows(ctx)
+    looks = [look for look in _looks(ctx) if look.get("kind") == "signal"]
+    for name in sealed:
+        ctx.inspect()
+        allowed = max(windows[name].get("looks", 1), 0)
+        taken = [look for look in looks if look.get("window") == name]
+        for number, look in enumerate(taken[allowed:], start=allowed + 1):
+            ctx.breach(f"this is signal look number {number} at the sealed window {name}, which allows {allowed}",
+                       where=look.path, fix="the window is no longer unseen: say so in every result that used this "
+                                            "look, and seal a fresh window for the next test")
+
+
+_prove("holdout/one-signal-look", _holdout, [
+    ("one signal look, and a pipeline look beside it", "pass", None, {**TWO, "looks": ({}, {"kind": "pipeline"})}),
+    ("a sealed window nobody has looked at", "pass", None, {"looks": ()}),
+    ("two looks at a window that allows two", "pass", None, {**TWO, "extra": "    looks = 2\n"}),
+    ("a signal look at a window that is not sealed is not counted", "pass", None, {"looks": ({}, {"window": "train"})}),
+    ("a second signal look at a window that allows one", "fail", "signal look number 2 at the sealed window", TWO),
+    ("a look whose kind is neither", "refuse", "must be one of signal, pipeline", {"looks": ({"kind": "peek"},)}),
+])
+
+
+# -- holdout/pipeline-look-declared -------------------------------------------------------------
+
+
+@rule("holdout/pipeline-look-declared", "A look that only proves the code works states its scope, its purpose and "
+      "what it was compared against, and computes no forward return.", pack="trading",
+      learned="A check that the code ran on unseen data also showed how the idea would have done there.")
+def pipeline_look_declared(ctx: Context) -> None:
+    _windows(ctx)
+    for look in _looks(ctx):
+        if look.get("kind") != "pipeline":
+            continue
+        ctx.inspect()
+        for field, what in data.DECLARED.items():
+            if not _text(look.get(field)):
+                ctx.breach(f"this pipeline look does not state {what}", where=look.path,
+                           fix=f"add {field} to the look record, in words a reader can check")
+        if look.get("forward_returns") is True:
+            ctx.breach("this pipeline look computed a forward return, so it saw how the idea did on sealed data",
+                       where=look.path, fix="count it as a signal look: set kind to signal, and tell the owner")
+
+
+_prove("holdout/pipeline-look-declared", _holdout, [
+    ("a pipeline look that states all three", "pass", None, {"looks": (PIPELINE,)}),
+    ("a signal look beside it states none of them", "pass", None, {"looks": (PIPELINE, {})}),
+    ("a pipeline look with no purpose", "fail", "not state its purpose", {"looks": (PIPELINE | {"purpose": None},)}),
+    ("a pipeline look compared against nothing", "fail", "does not state what it was compared against",
+     {"looks": (PIPELINE | {"compared_against": "  "},)}),
+    ("a pipeline look that computed a forward return", "fail", "computed a forward return",
+     {"looks": (PIPELINE | {"forward_returns": True},)}),
+    ("no pipeline look has been taken", "refuse", "nothing was inspected", {}),
+])
