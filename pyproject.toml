@@ -1,0 +1,30 @@
+[project]
+name = "themis-guardrails"
+# One home per fact: the version lives in src/themis/__init__.py and nowhere else.
+dynamic = ["version"]
+description = "Guardrails as code for work done by AI agents."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+themis = "themis.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/themis/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/themis"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/wheelhouse", "/dist", "/.venv"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
