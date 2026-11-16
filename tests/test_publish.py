@@ -200,6 +200,57 @@ def test_publishing_never_overwrites_and_copies_nothing_when_one_file_exists(tmp
     assert (index / SDIST).read_bytes() == b"the release already there"
 
 
+# --- the receipt and the releases page ---------------------------------------------------------
+
+
+def a_receipt(version: str, commit: str = "c" * 40) -> dict:
+    return {
+        "package": NAME,
+        "version": version,
+        "commit": commit,
+        "published_at_utc": "2026-01-02T03:04:05+00:00",
+        "tests": {"passed": 7},
+        "artifacts": [
+            {"file": f"themis_guardrails-{version}.tar.gz", "sha256": "b" * 64},
+            {"file": f"themis_guardrails-{version}-py3-none-any.whl", "sha256": "a" * 64},
+        ],
+    }
+
+
+def test_a_receipt_names_the_index_relative_to_the_repository(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    assert publish.index_label(root, root / "wheelhouse") == "wheelhouse"
+    assert publish.index_label(root, root / "build" / "index") == "build/index"
+
+
+def test_an_index_outside_the_repository_is_named_without_its_path(tmp_path: Path) -> None:
+    label = publish.index_label(tmp_path / "repo", tmp_path / "elsewhere" / "shared-index")
+    assert label == "outside the repository (shared-index)"
+    assert str(tmp_path) not in label
+
+
+def test_versions_are_ordered_as_releases_not_as_text() -> None:
+    order = ["0.9.9", "1.0.0a3", "1.0.0b1", "1.0.0rc2", "1.0.0", "1.0.9", "1.0.10"]
+    assert sorted(reversed(order), key=publish.version_key) == order
+    assert stopped(publish, REFUSE, lambda: publish.version_key("1.0"))
+
+
+def test_the_releases_page_lists_the_newest_first_and_installs_the_newest() -> None:
+    page = publish.render_releases([a_receipt("0.0.9"), a_receipt("0.0.10"), a_receipt("0.0.2")], None)
+    rows = [line.split("|")[1].strip() for line in page.splitlines() if line.startswith("| 0.")]
+    assert rows == ["0.0.10", "0.0.9", "0.0.2"]
+    assert "The latest release is **0.0.10**" in page
+    assert "[0.0.9.json](receipts/publish/0.0.9.json)" in page
+    assert f"`{'a' * 12}…`" in page  # the wheel's hash, not the source archive's
+    assert page.endswith("\n") and not page.endswith("\n\n")
+
+
+def test_the_releases_page_names_the_repository_only_when_it_is_known() -> None:
+    known = publish.render_releases([a_receipt("0.0.1")], "https://example.invalid/group/themis")
+    assert f'"{NAME} @ git+https://example.invalid/group/themis@{"c" * 40}"' in known
+    assert "git+" not in publish.render_releases([a_receipt("0.0.1")], None)
+
+
 # --- a stop always says why --------------------------------------------------------------------
 
 
@@ -277,6 +328,19 @@ PLANTS: list[tuple[str, str, str, Callable[[types.ModuleType], bool]]] = [
         "if not reason.strip() or not fix.strip():",
         "if False:",
         lambda m: _raises_value_error(lambda: m.Stop(FAIL, "", "")),
+    ),
+    (
+        "a receipt publishes a local folder's path",
+        "return index.resolve().relative_to(root.resolve()).as_posix()",
+        "return str(index)",
+        lambda m: m.index_label(Path("/srv/repo"), Path("/srv/repo/wheelhouse")) == "wheelhouse",
+    ),
+    (
+        "the oldest release is shown as the latest",
+        'key=lambda receipt: version_key(receipt["version"]), reverse=True',
+        'key=lambda receipt: version_key(receipt["version"]), reverse=False',
+        lambda m: "The latest release is **0.0.10**"
+        in m.render_releases([a_receipt("0.0.9"), a_receipt("0.0.10")], None),
     ),
 ]
 

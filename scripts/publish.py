@@ -5,6 +5,7 @@ There is no hosted CI. This script is the release gate, run on the owner's machi
 
     uv run python scripts/publish.py            publish the version in src/themis/__init__.py
     uv run python scripts/publish.py --dry-run  every stage, into a throwaway index; nothing is kept
+    uv run python scripts/publish.py --releases rewrite RELEASES.md from the receipts, and stop
 
 It ends with one verdict, and the exit code says which:
 
@@ -20,7 +21,8 @@ A blocking exit always prints a reason and a fix. The stages, in order:
     build      one wheel and one source archive, built into an empty folder
     verify     the built wheel is installed into a fresh environment and `themis --version` is run
     publish    the two files are copied into the index; an existing file is never overwritten
-    receipt    receipts/publish/<version>.json records the commit, the hashes and the test counts
+    receipt    receipts/publish/<version>.json records the commit, the hashes and the test counts;
+               RELEASES.md is then rewritten from every receipt, so the documents point at the release
 
 The decisions are pure functions (the ``judge_*`` family), so tests/test_publish.py can attack
 them without running a build.
@@ -51,6 +53,9 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = "src/themis/__init__.py"
 VERSION_LINE = re.compile(r'^__version__\s*=\s*"([^"]*)"\s*$', re.MULTILINE)
 RELEASE = re.compile(r"^\d+\.\d+\.\d+((a|b|rc)\d+)?$")
+VERSION_PARTS = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?$")
+STAGE_RANK = {"a": 0, "b": 1, "rc": 2, None: 3}
+RELEASES_FILE = "RELEASES.md"
 TIMEOUT_S = 900
 
 
@@ -202,6 +207,73 @@ def judge_version_output(stdout: str, version: str) -> None:
             f"the installed wheel answered {stdout.strip()!r} to --version; expected 'themis {version}'",
             "the wheel does not hold this tree's code: check [tool.hatch.build] in pyproject.toml",
         )
+
+
+def index_label(root: Path, index: Path) -> str:
+    """How a receipt names the index. Never an absolute path: a receipt is committed, and an
+    absolute path would publish the name of a local folder."""
+    try:
+        return index.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return f"outside the repository ({index.name})"
+
+
+def version_key(version: str) -> tuple[int, int, int, int, int]:
+    """Orders releases: 0.0.10 comes after 0.0.9, and a pre-release before its final."""
+    match = VERSION_PARTS.match(version)
+    if not match:
+        raise Stop(
+            REFUSE,
+            f"{version!r} is not a release version",
+            "a receipt's version is X.Y.Z, optionally followed by a1, b1 or rc1",
+        )
+    major, minor, patch, stage, number = match.groups()
+    return int(major), int(minor), int(patch), STAGE_RANK[stage], int(number or 0)
+
+
+def render_releases(receipts: list[dict], repository: str | None) -> str:
+    """RELEASES.md as the receipts dictate: every release, newest first, then how to install the newest."""
+    ordered = sorted(receipts, key=lambda receipt: version_key(receipt["version"]), reverse=True)
+    lines = [
+        "# Releases",
+        "",
+        "This page is written by `scripts/publish.py` from the receipts in `receipts/publish/`. Do not",
+        "edit it by hand: a test fails when it differs from the receipts.",
+        "",
+        "| Version | Published (UTC) | Commit | Tests | Wheel SHA-256 | Receipt |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for receipt in ordered:
+        version = receipt["version"]
+        wheel = next(item["sha256"] for item in receipt["artifacts"] if item["file"].endswith(".whl"))
+        published = receipt["published_at_utc"][:16].replace("T", " ")
+        lines.append(
+            f"| {version} | {published} | `{receipt['commit'][:12]}` | {receipt['tests']['passed']} passed "
+            f"| `{wheel[:12]}…` | [{version}.json](receipts/publish/{version}.json) |"
+        )
+    latest = ordered[0]
+    lines += [
+        "",
+        "## Install the latest release",
+        "",
+        f"The latest release is **{latest['version']}**, built from commit `{latest['commit']}`.",
+        "",
+    ]
+    if repository:
+        lines += [
+            "From the repository, pinned to that commit:",
+            "",
+            "```bash",
+            f'uv add --dev "{latest["package"]} @ git+{repository}@{latest["commit"]}"',
+            "```",
+            "",
+        ]
+    lines += [
+        "From the local index, on the machine that published it: see",
+        "[docs/publishing.md](docs/publishing.md#using-themis-in-a-project).",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -367,10 +439,51 @@ def receipt_path(root: Path, version: str) -> Path:
     return root / "receipts" / "publish" / f"{version}.json"
 
 
+def load_receipts(root: Path) -> list[dict]:
+    folder = root / "receipts" / "publish"
+    receipts = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            receipts.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError) as error:
+            raise Stop(
+                REFUSE, f"the receipt {path.name} is unreadable ({error})", "restore the receipt from git"
+            ) from None
+    return receipts
+
+
+def repository_url(root: Path) -> str | None:
+    """The repository's address, from its one home: [project.urls] in pyproject.toml."""
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8")).get("project", {})
+    url = project.get("urls", {}).get("Repository")
+    return url.removesuffix(".git").rstrip("/") if isinstance(url, str) and url else None
+
+
+def write_releases(root: Path) -> Path | None:
+    """Rewrite RELEASES.md from the receipts. None, and no file, when there is no receipt yet."""
+    receipts = load_receipts(root)
+    if not receipts:
+        return None
+    try:
+        text = render_releases(receipts, repository_url(root))
+    except (KeyError, TypeError, StopIteration) as error:
+        raise Stop(
+            REFUSE,
+            f"a receipt lacks a field the releases page needs ({error!r})",
+            "compare the receipts in receipts/publish/ with the newest one",
+        ) from None
+    path = root / RELEASES_FILE
+    scratch = path.with_name(path.name + ".tmp")
+    scratch.write_text(text, encoding="utf-8")
+    os.replace(scratch, path)  # the old page stays whole until the new one is complete
+    return path
+
+
 def stage_receipt(
     root: Path, *, name: str, version: str, commit: str | None, tests: dict[str, int],
-    artifacts: list[dict[str, object]], index: Path,
+    artifacts: list[dict[str, object]], index: Path, made: list[Path],
 ) -> Path:
+    """Write the receipt, then the releases page. `made` collects the receipt, so a failure takes it back."""
     uv = run(["uv", "--version"], cwd=root)
     now = dt.datetime.now(dt.timezone.utc)
     receipt = {
@@ -382,12 +495,14 @@ def stage_receipt(
         "published_at_local": now.astimezone().isoformat(timespec="seconds"),
         "tests": tests,
         "artifacts": artifacts,
-        "index": str(index),
+        "index": index_label(root, index),
         "tools": {"uv": uv.stdout.strip(), "python": sys.version.split()[0]},
     }
     path = receipt_path(root, version)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    made.append(path)
+    write_releases(root)
     return path
 
 
@@ -430,10 +545,11 @@ def pipeline(root: Path, index: Path, *, dry_run: bool) -> int:
 
             stage = "receipt"
             path = stage_receipt(
-                root, name=name, version=version, commit=commit, tests=tests, artifacts=artifacts, index=index
+                root, name=name, version=version, commit=commit, tests=tests, artifacts=artifacts,
+                index=index, made=copied,
             )
-            say(str(path.relative_to(root)))
-            print(f"PASS - {name} {version} is published. Commit the receipt.")
+            say(f"{path.relative_to(root)}; {RELEASES_FILE} rewritten")
+            print(f"PASS - {name} {version} is published. Commit the receipt and {RELEASES_FILE}.")
             return PASS
         except Stop as stop:
             code, reason, fix = stop.code, stop.reason, stop.fix
@@ -441,7 +557,7 @@ def pipeline(root: Path, index: Path, *, dry_run: bool) -> int:
             code = REFUSE
             reason = f"the pipeline itself crashed:\n      {tail(traceback.format_exc(), lines=8)}"
             fix = "this is a bug in scripts/publish.py; nothing can be concluded about the release"
-        for path in copied:  # an index never keeps half a release
+        for path in copied:  # an index never keeps half a release, nor a receipt for one that failed
             path.unlink(missing_ok=True)
         print(f"  x  {stage}: {reason}", file=sys.stderr)
         print(f"     fix: {fix}", file=sys.stderr)
@@ -453,7 +569,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Publish Themis to a local package index.")
     parser.add_argument("--dry-run", action="store_true", help="run every stage into a throwaway index")
     parser.add_argument("--index", help="the index folder (default: $THEMIS_INDEX, else ./wheelhouse)")
+    parser.add_argument("--releases", action="store_true", help=f"rewrite {RELEASES_FILE} from the receipts, and stop")
     args = parser.parse_args(argv)
+    if args.releases:
+        try:
+            written = write_releases(ROOT)
+        except Stop as stop:
+            print(f"  x  releases: {stop.reason}", file=sys.stderr)
+            print(f"     fix: {stop.fix}", file=sys.stderr)
+            print(f"{VERDICT[stop.code]} - {RELEASES_FILE} was not rewritten", file=sys.stderr)
+            return stop.code
+        print(f"PASS - {RELEASES_FILE} rewritten from the receipts" if written else "PASS - no receipt yet; nothing to write")
+        return PASS
     chosen = args.index or os.environ.get("THEMIS_INDEX") or str(ROOT / "wheelhouse")
     return pipeline(ROOT, Path(chosen).expanduser().resolve(), dry_run=args.dry_run)
 

@@ -7,6 +7,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.urls]
+Repository = "https://github.com/solvantage/Themis"
+
 [project.scripts]
 themis = "themis.cli:main"
 

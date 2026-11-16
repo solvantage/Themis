@@ -2,7 +2,8 @@
 
 > Design 0.2 — 2026-11-16. Status: **proposed**. Built so far: an installable skeleton (it
 > answers `themis --version` and nothing else) and the local publish pipeline
-> ([docs/publishing.md](docs/publishing.md)). No rule exists yet.
+> ([docs/publishing.md](docs/publishing.md)). The skeleton is released; see
+> [RELEASES.md](RELEASES.md). No rule exists yet.
 
 **In one line:** Themis makes a repository checkable by a machine. Every number has a receipt,
 every piece of work follows one sealed path, and every guard is proven able to say no.
@@ -20,6 +21,7 @@ not the speaker.
 | [docs/packs/trading.md](docs/packs/trading.md) | The trading pack |
 | [docs/packs/marketing.md](docs/packs/marketing.md) | The marketing content pack |
 | [docs/publishing.md](docs/publishing.md) | How a release is made and installed |
+| [RELEASES.md](RELEASES.md) | The releases so far. Written by the pipeline from its receipts |
 
 ## 1. Why this exists
 

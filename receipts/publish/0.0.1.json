@@ -24,9 +24,16 @@
       "bytes": 44342
     }
   ],
-  "index": "/Users/vtanathip/Repository/Themis/wheelhouse",
+  "index": "wheelhouse",
   "tools": {
     "uv": "uv 0.11.21 (5aa65dd7a 2026-06-11 aarch64-apple-darwin)",
     "python": "3.13.14"
-  }
+  },
+  "amended": [
+    {
+      "field": "index",
+      "at_utc": "2026-11-16T04:17:40+00:00",
+      "reason": "The index was recorded as an absolute local path. It is now relative to the repository. No other field was changed."
+    }
+  ]
 }

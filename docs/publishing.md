@@ -7,7 +7,11 @@ every project on the machine installs from.
 ```bash
 uv run python scripts/publish.py            # publish the current version
 uv run python scripts/publish.py --dry-run  # every stage, into a throwaway index; nothing is kept
+uv run python scripts/publish.py --releases # rewrite RELEASES.md from the receipts, and stop
 ```
+
+Every release is listed in **[RELEASES.md](../RELEASES.md)**, with its commit, its test count and
+the line that installs it. The pipeline writes that page; nobody edits it.
 
 ## The verdict
 
@@ -29,10 +33,10 @@ reason and a fix.
 | build | Builds one wheel and one source archive into an empty folder. | The build fails, or the files do not carry this name and version (FAIL). |
 | verify | Installs the built wheel into a fresh environment, away from the source, and runs `themis --version`. | It does not install, or it answers with another version (FAIL). |
 | publish | Copies both files into the index and compares their hashes. | A file with that name is already there (FAIL). |
-| receipt | Writes `receipts/publish/<version>.json`. | — |
+| receipt | Writes `receipts/publish/<version>.json`, then rewrites `RELEASES.md` from every receipt. | A receipt cannot be read (REFUSE). |
 
-When a stage stops after files were copied, the copies are removed. The index never holds half a
-release.
+When a stage stops after files were copied, the copies and the new receipt are removed. The index
+never holds half a release, and no receipt is left for a release that failed.
 
 ## Where things go
 
@@ -40,6 +44,7 @@ release.
 | --- | --- | --- |
 | `wheelhouse/` | The local package index: wheels and source archives, one pair per version | No. Built files, never source. |
 | `receipts/publish/<version>.json` | The commit, the hashes of both files, the test counts, the tool versions, the time | **Yes. Commit it after each publish.** |
+| `RELEASES.md` | Every release, newest first, and how to install the newest. Written from the receipts. | **Yes, with the receipt.** Never edited by hand. |
 
 Choose another index folder with `--index <folder>` or the `THEMIS_INDEX` environment variable.
 
@@ -49,20 +54,29 @@ Choose another index folder with `--index <folder>` or the `THEMIS_INDEX` enviro
    `src/themis/__init__.py`. That line is the version's only home; `pyproject.toml` reads it.
 2. **A release is tied to one commit.** The tree must be clean. A release from a dirty tree pins
    nothing, so it is refused.
-3. **The receipt is committed.** The next publish is refused until it is, because the tree is
-   dirty.
+3. **The receipt and `RELEASES.md` are committed.** The next publish is refused until they are,
+   because the tree is dirty.
 
-## The first release
+**A receipt holds no local path.** It names the index by its path inside the repository. A
+receipt is committed, and an absolute path would publish the name of a local folder.
+`tests/test_releases.py` checks every committed receipt.
 
-The folder is not a git repository yet, so a real publish is refused. Once you are ready:
+**A receipt is written by the pipeline.** If one must be corrected afterwards, the correction is
+listed in its `amended` field with the reason, so the change is never silent.
+
+## Making a release
 
 ```bash
-git init
-git add -A
-git commit -m "Themis skeleton and local publish pipeline"
+# 1. raise __version__ in src/themis/__init__.py, and commit
 uv run python scripts/publish.py
-git add receipts && git commit -m "receipt: 0.0.1"
+git add receipts RELEASES.md && git commit -m "release: <version>"
+git push
 ```
+
+## Installing from the repository
+
+Another machine has no local index. There, install from the repository, pinned to a release's
+commit. [RELEASES.md](../RELEASES.md) prints the exact line for the newest release.
 
 ## Using Themis in a project
 
@@ -109,8 +123,9 @@ Switch that project back to the index before its own next release.
 ## How the pipeline is tested
 
 `tests/test_publish.py` attacks the pipeline's decisions: every refusal, the near misses that must
-pass, and nine one-line bugs planted in the pipeline's own source and run in memory. Each planted
-bug names the one case it must flip.
+pass, and eleven one-line bugs planted in the pipeline's own source and run in memory. Each
+planted bug names the one case it must flip. `tests/test_releases.py` pins `RELEASES.md` to the
+receipts and checks that the documents point at it.
 
 Checked end to end on 2026-11-16 with uv 0.11.21, on a scratch copy with its own repository: a
 publish, a refusal on a dirty tree, a failure on a repeated version, a second version, and an
