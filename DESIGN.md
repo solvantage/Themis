@@ -1,9 +1,8 @@
 # Themis — guardrails as code for work done by AI agents
 
-> Design 0.2 — 2026-11-16. Status: **proposed**. Built so far: an installable skeleton (it
-> answers `themis --version` and nothing else) and the local publish pipeline
-> ([docs/publishing.md](docs/publishing.md)). The skeleton is released; see
-> [RELEASES.md](RELEASES.md). No rule exists yet.
+> Design 0.2 — 2026-11-16. Status: **being built**. `themis describe` lists every rule that
+> exists, and whether it is proven. What is released is in [RELEASES.md](RELEASES.md); how a
+> release is made is in [docs/publishing.md](docs/publishing.md).
 
 **In one line:** Themis makes a repository checkable by a machine. Every number has a receipt,
 every piece of work follows one sealed path, and every guard is proven able to say no.
