@@ -139,7 +139,14 @@ def _rule_changes(old: dict[str, Any], new: dict[str, Any]) -> list[Change]:
             was, now = before.get(name, default), after.get(name, default)
             if was == now:
                 continue
-            kind = "weakening" if param is None else _direction(was, now, param.stricter)
+            if param is None:
+                kind = "weakening"
+            elif param.stricter is None:
+                # A path or a name has no stricter direction. Setting one turns the rule on. Changing
+                # one can point the rule away from what it guarded, and nothing says which way it went.
+                kind = "tightening" if was in (None, "", [], {}) else "weakening"
+            else:
+                kind = _direction(was, now, param.stricter)
             found.append(Change(kind, f"{rule_id}: {name} {was!r} to {now!r}"))
     return found
 

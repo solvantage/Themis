@@ -220,6 +220,19 @@ def test_each_kind_of_change_is_classified(old: dict, new: dict, kind: str) -> N
     assert kinds == {kind}
 
 
+def test_a_path_pointed_elsewhere_is_a_weakening_and_a_path_first_set_is_not() -> None:
+    """A path has no stricter direction, so a change to one cannot be classified: it may point the
+    rule away from what it guarded."""
+    from themis import gates
+
+    gates.load_all()
+    here = {"rules": {"order/sealed-first": {"work": "work/*", "seal": ["PLAN.md"], "results": ["results/**"]}}}
+    there = {"rules": {"order/sealed-first": {"work": "elsewhere/*", "seal": ["PLAN.md"], "results": ["results/**"]}}}
+    assert {change.kind for change in configguard.classify(here, there)} == {"weakening"}
+    assert {change.kind for change in configguard.classify({}, here)} == {"tightening"}
+    assert {change.kind for change in configguard.classify(here, {})} == {"weakening"}
+
+
 def test_no_change_is_no_change() -> None:
     same = {"rules": {"config/locked": "enforce"}, "roles": {"w": {"paths": ["a/**"]}}}
     assert configguard.classify(same, same) == []

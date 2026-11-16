@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from themis import configguard, paths, roles, standards
 from themis import manifest as manifests
-from themis.rule import Context, Param, proof, rule
+from themis.rule import Context, proof, rule
 
 MANIFEST = """
     [project]

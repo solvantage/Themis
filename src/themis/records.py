@@ -56,6 +56,7 @@ register("decision", {
     "work": Required(str), "decision": Required(str), "verdict": Required(Choice("pass", "fail", "refuse")),
     "gate": Required(str), "gate_version": Required(str), "decided_at": Required(str),
     "level": str, "enough_evidence": bool, "numbers": {"*": ANY}, "reason": str, "by": str,
+    "inputs": str,  # the file the gate read, when it is not the work's own metrics file
 }, "decisions/**/*.json")
 
 register("issue", {

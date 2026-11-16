@@ -30,15 +30,23 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     def count(key: str) -> int:
         return len(stats.get(key, []))
 
-    receipts.write(root, "suite", tree, {
+    from themis.gates.suite import narrowing
+
+    at = receipts.now()
+    args = [str(arg) for arg in config.invocation_params.args]
+    # One receipt for each run, so a quick run of one test never replaces the full run's receipt.
+    receipts.write(root, "suite", f"{tree}-{at.replace(':', '').replace('-', '')[:15]}", {
         "tree": tree,
-        "at": receipts.now(),
-        "command": ["pytest", *config.invocation_params.args],
+        "at": at,
+        "command": ["pytest", *args],
         "exit_status": int(exitstatus),
         "passed": count("passed"),
         "failed": count("failed"),
         "errors": count("error"),
         "skipped": count("skipped"),
         "skipped_tests": sorted(report.nodeid for report in stats.get("skipped", [])),
+        # Tests left out by any route: the command line, the config file or the environment.
+        "deselected": count("deselected"),
+        "narrowed": narrowing(args),
         "python": sys.version.split()[0],
     })

@@ -6,3 +6,6 @@ dist/
 # The local package index that scripts/publish.py fills. Built files, never source.
 wheelhouse/
 .DS_Store
+.ruff_cache/
+.themis/
+node_modules/

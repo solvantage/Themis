@@ -72,8 +72,29 @@ def read_all(root: Path, kind: str) -> list[dict[str, Any]]:
     return found
 
 
+def unreadable(root: Path, kind: str) -> list[str]:
+    """The receipt files of one kind that exist and cannot be read. A corrupted receipt must be
+    refused by the rule that needs it, never skipped."""
+    found = []
+    for base in (LOCAL, COMMITTED):
+        folder = root / base / kind
+        for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                data = None
+            if not isinstance(data, dict):
+                found.append(path.relative_to(root).as_posix())
+    return found
+
+
 def suite_for_tree(root: Path, tree: str | None = None) -> dict[str, Any] | None:
-    """The newest suite receipt taken on this exact tree, or None."""
+    """The suite receipt that speaks for this exact tree, or None.
+
+    A tree can have several: the full run, then a quick run of one test. The newest full run
+    speaks for the tree; a narrower run never replaces it. With no full run, the newest run does.
+    """
     tree = tree or tree_fingerprint(root)
     matching = [receipt for receipt in read_all(root, "suite") if receipt.get("tree") == tree and tree]
-    return max(matching, key=lambda receipt: receipt.get("at", ""), default=None)
+    full = [receipt for receipt in matching if not receipt.get("narrowed") and not receipt.get("deselected")]
+    return max(full or matching, key=lambda receipt: receipt.get("at", ""), default=None)
