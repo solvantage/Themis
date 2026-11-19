@@ -151,6 +151,24 @@ def _(world: World) -> None:
     world.write("work/b/notes.md", "an idea, not run yet\n")
 
 
+@proof("ledger/complete", "work in two places, each unit with its record", expect="pass")
+def _(world: World) -> None:
+    world.manifest(COMPLETE_SETUP.replace('"work/*"', '["work/*", "lab/*/runs"]'))
+    _row(world, "a")
+    world.write("work/a/results/out.csv", "1\n")
+    world.write("ledger/b.toml", 'work = "lab/b/runs"\nstate = "done"\n')
+    world.write("lab/b/runs/results/out.csv", "1\n")
+
+
+@proof("ledger/complete", "work in two places, and a unit in the second with no record", expect="fail",
+       contains="no ledger record names it")
+def _(world: World) -> None:
+    world.manifest(COMPLETE_SETUP.replace('"work/*"', '["work/*", "lab/*/runs"]'))
+    _row(world, "a")
+    world.write("work/a/results/out.csv", "1\n")
+    world.write("lab/b/runs/results/out.csv", "1\n")
+
+
 @proof("ledger/complete", "results that no ledger record names", expect="fail", contains="no ledger record names it")
 def _(world: World) -> None:
     world.manifest(COMPLETE_SETUP)

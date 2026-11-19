@@ -267,14 +267,19 @@ def _param(manifest: manifests.Manifest, rule_id: str, name: str) -> object:
     return manifest.setting(rule).params.get(name) if rule else None
 
 
-def _work_pattern(manifest: manifests.Manifest) -> str | None:
-    """Where this project keeps its units of work: the first place that says so."""
+def _work_patterns(manifest: manifests.Manifest) -> list[str]:
+    """Where this project keeps its units of work, one pattern or several: the first place that says so."""
+    from themis import work
+
     for rule_id in ("order/logged-first", "order/sealed-first", "claims/receipt", "ledger/complete"):
-        found = _param(manifest, rule_id, "work")
+        found = work.patterns(_param(manifest, rule_id, "work"))  # type: ignore[arg-type]
         if found:
-            return str(found)
-    return next((loaded_table["work"] for loaded in manifest.packs
-                 if (loaded_table := manifest.table(loaded.name)).get("work")), None)
+            return found
+    for loaded in manifest.packs:
+        found = work.patterns(manifest.table(loaded.name).get("work"))
+        if found:
+            return found
+    return []
 
 
 def _unit(root: Path, manifest: manifests.Manifest, name: str) -> str | None:
@@ -282,15 +287,15 @@ def _unit(root: Path, manifest: manifests.Manifest, name: str) -> str | None:
     from themis import work
     from themis.gitlog import Git
 
-    pattern = _work_pattern(manifest)
-    if not pattern:
+    patterns = _work_patterns(manifest)
+    if not patterns:
         _say("themis: this project has not said where its work lives. Set `work` for a pack or for order/logged-first.")
         return None
-    units = work.units(Git(root).all_files(), pattern)
+    units = work.units(Git(root).all_files(), patterns)
     wanted = name.strip("/")
-    found = [unit for unit in units if unit == wanted or unit.rsplit("/", 1)[-1] == wanted]
+    found = [unit for unit in units if unit == wanted] or [unit for unit in units if unit.rsplit("/", 1)[-1] == wanted]
     if len(found) != 1:
-        _say(f"themis: {name!r} names {len(found)} unit(s) of work under {pattern}.")
+        _say(f"themis: {name!r} names {len(found)} unit(s) of work under {', '.join(patterns)}.")
         return None
     return found[0]
 
@@ -342,13 +347,13 @@ def command_cite(args: argparse.Namespace) -> int:
     if ready is None:
         return EXIT_REFUSE
     root, manifest = ready
-    pattern = _work_pattern(manifest)
-    if not pattern:
+    patterns = _work_patterns(manifest)
+    if not patterns:
         _say("themis: this project has not said where its work lives, so no record can be cited.")
         return EXIT_REFUSE
     metrics = str(_param(manifest, "claims/receipt", "metrics") or "results/metrics.json")
     try:
-        print(claims.cite(root, work.units(Git(root).all_files(), pattern), args.work, args.key, metrics, args.decimals))
+        print(claims.cite(root, work.units(Git(root).all_files(), patterns), args.work, args.key, metrics, args.decimals))
     except ValueError as error:
         _say(f"themis: nothing to cite: {error}")
         return EXIT_REFUSE
@@ -377,12 +382,22 @@ def command_new(args: argparse.Namespace) -> int:
     if ready is None:
         return EXIT_REFUSE
     root, manifest = ready
-    pattern = _work_pattern(manifest)
+    patterns = _work_patterns(manifest)
     home = records.home_of(manifest, "ledger")
     folder = home.rsplit("/", 1)[0] if "/" in home else "."
-    if not pattern or "*" in folder or pattern.count("*") != 1:
+    if args.under:
+        if args.under.strip("/") not in patterns:
+            _say(f"themis: {args.under} is not one of the places work lives: {', '.join(patterns) or 'none is set'}.")
+            return EXIT_REFUSE
+        patterns = [args.under.strip("/")]
+    choices = [pattern for pattern in patterns if pattern.count("*") == 1]
+    if len(choices) > 1:
+        _say(f"themis: work lives in several places; name one with --under: {', '.join(choices)}.")
+        return EXIT_REFUSE
+    if not choices or "*" in folder:
         _say("themis: set where work lives (one * in the pattern) and where the ledger is, then log the unit again.")
         return EXIT_REFUSE
+    pattern = choices[0]
     today = dt.date.today().isoformat()
     name = f"{today}_{grants.slug(args.name)}"
     unit = pattern.replace("*", name)
@@ -772,6 +787,7 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--question", required=True, help="what the work is meant to find out")
     new.add_argument("--kind")
     new.add_argument("--variants", type=int, default=1, help="how many variants this unit covers")
+    new.add_argument("--under", help="which work pattern the unit goes under, when work names several")
 
     run = add("run", command_run, "Run a unit's work under guard, and write the run's receipt.")
     run.add_argument("work")

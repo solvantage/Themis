@@ -8,14 +8,15 @@ from __future__ import annotations
 
 from themis import records, work
 from themis.rule import Context, Param, proof, rule
-from themis.schema import ANY, Required
+from themis.schema import ANY, Either, Required
 
 records.register("ledger", {"work": Required(str), "*": ANY}, "ledger/*.toml")
 records.register("amendment", {
     "seal": Required(str), "sha256": Required(str), "reason": Required(str), "loosens": bool, "*": ANY,
 }, "**/amendments/*.toml")
 
-WORK = Param("work", str, None, None, "the folders that each hold one unit of work, such as work/*")
+WORK = Param("work", Either(str, [str]), None, None,
+             "the folders that each hold one unit of work: one pattern, such as work/*, or a list of them")
 SEAL = Param("seal", [str], None, None, "the sealed plan's file, inside a unit")
 RESULTS = Param("results", [str], None, None, "the result files, inside a unit")
 MAIN = Param("main", str, None, None, "the main line's name, when it is not main")

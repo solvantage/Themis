@@ -571,7 +571,7 @@ The full contract, with the pack interface and the pack test kit, is in
 | `themis prove [RULE ...]` | Run the proofs, and hold each turned-on pack to the pack contract |
 | `themis explain RULE` | A rule's promise, the incident behind it, its parameters and its proofs |
 | `themis doctor` | Say what is wrong with the project's setup |
-| `themis new NAME --question ...` | Log a unit of work before it runs: a ledger record, and the folder it will live in |
+| `themis new NAME --question ... [--under PATTERN]` | Log a unit of work before it runs: a ledger record, and the folder it will live in. `work` is one pattern or a list; with several places that can hold a unit, `--under` names one |
 | `themis run UNIT -- COMMAND` | Run a unit's work on a clean tree, after its seal; write the run receipt and, with `--input`, the provenance |
 | `themis decide UNIT --gate GATE` | Ask a gate for the decision and store it; `--by owner` records the owner's own call |
 | `themis report UNIT` | Build a unit's report with its pack's builder |
