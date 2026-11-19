@@ -31,6 +31,8 @@ import re
 import shlex
 import stat
 import subprocess
+import sys
+import unicodedata
 import urllib.parse
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -61,6 +63,12 @@ UNREADABLE = "Themis cannot read this command, so it cannot say it is safe."
 GUARDED = (".claude/**", ".mcp.json", ".githooks/**", ".husky/**", ".pre-commit-config.yaml", "lefthook.yml",
            "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml", "lefthook-local.yml", "lefthook-local.yaml",
            ".themis/**", "**/.git", "**/.git/**")
+#: What the hook itself runs from, guarded in allow-safe: a `.pth` file, a changed lock or a
+#: replaced script there runs code at the next hook call. The interpreter's own folders and the
+#: themis package are added when the hook starts.
+RUNTIME = (".venv/**", "venv/**", "**/site-packages/**", "pyproject.toml", "uv.lock", "uv.toml", "requirements*.txt",
+           ".python-version", "package.json", "package-lock.json", "node_modules/.bin/**", "sitecustomize.py",
+           "usercustomize.py")
 #: The host's settings files outside the project. In allow-safe they are guarded, and their ask
 #: and deny lists are read with the project's.
 USER_SETTINGS = ("settings.json", "settings.local.json")
@@ -163,9 +171,18 @@ def policy(root: Path) -> Policy:
                 inside.append(f"{name}/**")
             elif real is not None and name is None:
                 outside.append(real)
+        # The interpreter running this hook, and the themis package it imports, wherever they are.
+        for folder in {sys.prefix, sys.base_prefix, str(Path(__file__).resolve().parent)}:
+            real = os.path.realpath(folder)
+            name = _within(real, os.path.realpath(root))
+            if name:
+                inside.append(f"{name}/**")
+            elif name is None:
+                outside.append(real)
     return Policy(
         mode=mode,
-        protected=(*configguard.protected_paths(manifest), *((LOCAL_SETTINGS, *GUARDED, *inside) if safe else ())),
+        protected=(*configguard.protected_paths(manifest),
+                   *((LOCAL_SETTINGS, *GUARDED, *RUNTIME, *inside) if safe else ())),
         temp=tuple(agents.get("temp", TEMP)),
         keep=tuple(agents.get("keep", ())),
         ask=tuple(agents.get("ask", ())),
@@ -241,15 +258,19 @@ def _real(text: str, cwd: Path | None) -> str | None:
     return os.path.realpath(text)
 
 
+def _fold(text: str) -> str:
+    """A name as the file system compares it, at its loosest: one Unicode form (NFC), so the NFD
+    spelling a Mac also accepts is the same name, and no case."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
+
+
 def _within(real: str, home: str) -> str | None:
-    """`real` as a path inside the folder `home`, compared without regard to case; "" for the
-    folder itself; None outside it."""
-    folded, base = real.casefold(), home.casefold().rstrip("/")
-    if folded == base:
-        return ""
-    if folded.startswith(base + "/"):
-        return real[len(base) + 1:]
-    return None
+    """`real` as a path inside the folder `home`, part by part, in one Unicode form and without
+    regard to case; "" for the folder itself; None outside it."""
+    parts, base = [part for part in real.split("/") if part], [part for part in home.split("/") if part]
+    if len(parts) < len(base) or [_fold(part) for part in parts[:len(base)]] != [_fold(part) for part in base]:
+        return None
+    return "/".join(unicodedata.normalize("NFC", part) for part in parts[len(base):])
 
 
 def _relative(word: str, root: Path, cwd: Path | None = None) -> str | None:
@@ -261,38 +282,37 @@ def _relative(word: str, root: Path, cwd: Path | None = None) -> str | None:
     return None if real is None else _within(real, os.path.realpath(root))
 
 
-def _holders(pattern: str) -> tuple[list[str], bool]:
-    """The folders that hold what a path pattern names, and True when any folder may hold one
-    (the pattern starts with a wildcard). A pattern such as `**/.git` names a folder wherever it
-    is; only the path itself, or a path inside it, touches it."""
-    parts = pattern.casefold().strip("/").split("/")
-    if parts[0] == "**" and len(parts) > 1 and not any(char in parts[1] for char in "*?["):
-        return [], False
-    lead = []
-    for part in parts:
-        if any(char in part for char in "*?["):
-            break
-        lead.append(part)
-    count = len(lead) - 1 if len(lead) == len(parts) else len(lead)
-    return ["/".join(lead[:size]) for size in range(1, count + 1)], not lead
+def _holds(name: str, pattern: str, root: Path) -> bool:
+    """True when the folder `name` could hold what a path pattern names: each of its parts fits
+    the pattern's part at that depth, and the pattern goes deeper. A pattern such as `**/.git`
+    names a folder wherever it is, so only the path itself, or one inside it, touches it; one such
+    as `**/*.key` may be held by any folder."""
+    parts, pattern_parts = _fold(name).strip("/").split("/"), _fold(pattern).strip("/").split("/")
+    for index, part in enumerate(parts):
+        if index >= len(pattern_parts) - 1:
+            return False
+        if pattern_parts[index] == "**":
+            if not any(char in pattern_parts[index + 1] for char in "*?["):
+                return False
+            return (root / name).is_dir()
+        if not _fnmatch(part, pattern_parts[index]):
+            return False
+    return True
 
 
 def _touches(name: str, patterns: Iterable[str], root: Path) -> str | None:
-    """The pattern a repository path matches, or holds a match of as a folder, compared without
-    regard to case. The root holds everything."""
-    folded = name.casefold().strip("/")
+    """The pattern a repository path matches, or holds a match of as a folder, compared in one
+    Unicode form and without regard to case. The root holds everything."""
+    folded = _fold(name).strip("/")
     for pattern in patterns:
-        if not folded or paths.matches(folded, pattern.casefold()):
-            return pattern
-        folders, anywhere = _holders(pattern)
-        if folded in folders or (anywhere and (root / name).is_dir()):
+        if not folded or paths.matches(folded, _fold(pattern)) or _holds(name, pattern, root):
             return pattern
     return None
 
 
 def _could_touch(name: str, pattern: str) -> bool:
     """True when a path holding a glob could name, or hold, what a path pattern names."""
-    globbed, parts = name.casefold().strip("/").split("/"), pattern.casefold().strip("/").split("/")
+    globbed, parts = _fold(name).strip("/").split("/"), _fold(pattern).strip("/").split("/")
     for index, part in enumerate(globbed):
         if index >= len(parts):
             return False
@@ -616,9 +636,9 @@ def _hits(word: Word, cwd: Path | None, ctx: _Context) -> tuple[str, str] | None
             return real, "protected"
     if cwd is None and not os.path.isabs(text) and not text.startswith("~"):
         names.append(os.path.normpath(text))  # the stricter reading: from the root
-        base = os.path.basename(text.rstrip("/")).casefold()
+        base = _fold(os.path.basename(text.rstrip("/")))
         for kind, patterns in (("protected", protected), ("kept", keep)):
-            lasts = [pattern.casefold().rstrip("/").rsplit("/", 1)[-1] for pattern in patterns]
+            lasts = [_fold(pattern).rstrip("/").rsplit("/", 1)[-1] for pattern in patterns]
             if any(last.strip("*?") and _fnmatch(base, last) for last in lasts):
                 return text, kind
     for name in names:
@@ -646,7 +666,7 @@ def _write_danger(word: Word, cwd: Path | None, ctx: _Context) -> str | None:
 def _temp_word(word: Word, line: _Line, ctx: _Context) -> bool:
     """True when a word names a path inside a temp folder: literal, placed, past every link, with
     no command before it in the line that could have made a link."""
-    if not word.literal or line.tree_changed or not ctx.temp:
+    if not word.literal or word.extended or line.tree_changed or not ctx.temp:
         return False
     real = _real(word.text, line.cwd)
     return real is not None and not _guarded(real, ctx.policy.outside) and _scratch(real, ctx.home, ctx.temp)
@@ -994,7 +1014,7 @@ def _code_danger(code: str, ctx: _Context) -> str | None:
         return "This command runs code that deletes files or runs other programs."
     for pattern in (*ctx.policy.protected, *ctx.policy.keep):
         literal = _literal(pattern)
-        if literal and literal.casefold() in code.casefold():
+        if literal and _fold(literal) in _fold(code):
             return f"This command runs code that names {pattern}, which only the owner changes."
     return None
 
@@ -1017,7 +1037,7 @@ def _scan(text: str, ctx: _Context) -> str | None:
                                 (ctx.policy.keep, "which the project keeps")):
             for pattern in patterns:
                 literal = _literal(pattern)
-                if literal and literal.casefold() in text.casefold():
+                if literal and _fold(literal) in _fold(text):
                     return f"Themis cannot read all of this command, and it writes beside {pattern}, {whose}."
     return None
 
@@ -1060,8 +1080,9 @@ def _tool(**rules: Any) -> Rule:
 
 def _writable(word: Word, line: _Line, ctx: _Context) -> bool:
     """True when a literal path may be written: inside a temp folder, or inside the project away
-    from every protected and kept path and the folders that hold them."""
-    if not word.literal or line.tree_changed:
+    from every protected and kept path and the folders that hold them. A `#`, `^` or `~` inside it
+    is a glob to zsh's extended_glob, so such a path is never known."""
+    if not word.literal or word.extended or line.tree_changed:
         return False
     real = _real(word.text, line.cwd)
     if real is None or _guarded(real, ctx.policy.outside):
@@ -1142,10 +1163,11 @@ def _sed(args: list[Word], line: _Line, ctx: _Context) -> bool:
     return all(SED_SCRIPT.fullmatch(script.strip()) for script in scripts)
 
 
-def _printf(args: list[Word], line: _Line, ctx: _Context) -> bool:
-    """printf with a plain format first: no option, so never `-v`, which sets a shell variable. The
-    values after the format may come from substitutions, which are read in turn."""
-    return bool(args) and args[0].literal and not args[0].text.startswith("-")
+def _cd_rule(args: list[Word], line: _Line, ctx: _Context) -> bool:
+    """cd with at most -L or -P and one folder: never zsh's `+N` or `-N` stack forms, nor its
+    two-word form."""
+    operands = [word for word in args if word.text not in ("-L", "-P", "--") or not word.literal]
+    return len(operands) <= 1 and all(word.text == "-" or not word.text.startswith(("+", "-")) for word in operands)
 
 
 FIND_ACTS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
@@ -1354,8 +1376,8 @@ def _git_push(rest: list[Word], folder: Path, line: _Line, ctx: _Context) -> boo
     main = ctx.policy.main.removeprefix("refs/").removeprefix("heads/").removeprefix("remotes/").split("/")[-1]
     default = _git_run(folder, "symbolic-ref", "-q", "--short", f"refs/remotes/{remote}/HEAD")
     named = default.stdout.strip().removeprefix(f"{remote}/") if default is not None else ""
-    mains = {"main", "master", main.casefold(), named.casefold()} - {""}  # also the remote's own default branch
-    if remote not in _remotes(folder) or branch.casefold() in mains or branch.startswith(("refs/", "heads/", "remotes/", "tags/")):
+    mains = {"main", "master", _fold(main), _fold(named)} - {""}  # also the remote's own default branch
+    if remote not in _remotes(folder) or _fold(branch) in mains or branch.startswith(("refs/", "heads/", "remotes/", "tags/")):
         return False
     mapped = _git_run(folder, "config", "--get-regexp", rf"^remote\.{re.escape(remote)}\.(push|mirror)$")
     if mapped is None or mapped.stdout.strip():
@@ -1379,8 +1401,10 @@ SAFE: dict[str, Rule] = {
     "rg": _tool(short="z", long=("pre", "pre-glob", "hostname-bin", "search-zip"), glob=False),
     "file": _tool(short="C", long=("compile",), glob=False),
     "date": _tool(short="sf", long=("set", "file"), glob=False),
-    **{name: _tool(dynamic=True) for name in ("echo", "true", "false", "test", "[", "cd")},
-    "printf": _printf, "sed": _sed, "find": _find, "mkdir": _maker, "touch": _maker, "git": _git_safe,
+    # Not printf, test or [: zsh reads printf's numeric arguments, and bash reads `test -v`'s
+    # subscripts, as arithmetic, which runs a `$(...)` written inside single quotes.
+    **{name: _tool(dynamic=True) for name in ("echo", "true", "false")},
+    "cd": _cd_rule, "sed": _sed, "find": _find, "mkdir": _maker, "touch": _maker, "git": _git_safe,
     "rm": _remover("rRfvdI", ("recursive", "force", "verbose", "dir")), "rmdir": _remover("v", ()),
 }
 #: Safe commands that change nothing, so a `cd` after them can still be followed.

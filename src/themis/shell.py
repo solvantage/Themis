@@ -40,6 +40,7 @@ class Word:
     glob: bool = False  # an unquoted * ? or [
     brace: bool = False  # an unquoted brace list, {a,b} or {1..3}
     tilde: bool = False  # an unquoted ~ (or zsh's =) at the start
+    extended: bool = False  # an unquoted #, ^ or ~ inside it: a glob under zsh's extended_glob
     subs: list[str] = field(default_factory=list)  # the text of each command substitution in it
 
     @property
@@ -250,6 +251,8 @@ class _Reader:
                     word.brace = True
                 elif char in "~=" and self.i == start:
                     word.tilde = True
+                elif char in "#^~":
+                    word.extended = True
                 out.append(char)
                 self.i += 1
         word.text, word.raw = "".join(out), self.s[start:self.i]
