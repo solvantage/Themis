@@ -70,7 +70,7 @@ pack.standards["themis-trading/1"] = Standard(
         "trials/settings-counted", "trials/count-feeds-adjustment",
         "holdout/guarded", "holdout/one-signal-look", "holdout/pipeline-look-declared",
         "validity/fills-on-tape", "validity/net-of-cost", "validity/baselines", "validity/power-stated",
-        "validity/audit-reproduced", "live/off-by-default",
+        "validity/audit-reproduced", "validity/same-basis", "live/off-by-default",
         "decision/issued-by-gate", "decision/enough-evidence", "decision/calibrated",
         "scorecard/complete", "scorecard/believable", "report/generated",
     )},
