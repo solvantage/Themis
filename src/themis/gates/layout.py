@@ -84,7 +84,8 @@ def _(world: World) -> None:
     _tools(world, "lint", "pack")
 
 
-@proof("layout/required-files", "a tool folder without its page", expect="fail", contains="this tool folder holds no README.md")
+@proof("layout/required-files", "a tool folder without its page",
+       expect="fail", contains="this tool folder holds no README.md")
 def _(world: World) -> None:
     _tools(world, "lint", "pack")
     world.remove("tools/pack/README.md")
@@ -96,13 +97,15 @@ def _(world: World) -> None:
     world.move("tools/lint/lint.py", "tools/lint/lint.sh")
 
 
-@proof("layout/required-files", "a nested guide without its index", expect="fail", contains="this guide folder holds no index.md")
+@proof("layout/required-files", "a nested guide without its index",
+       expect="fail", contains="this guide folder holds no index.md")
 def _(world: World) -> None:
     _tools(world, "lint")
     world.write("docs/guides/setup/deep/notes.md", "# Notes\n")
 
 
-@proof("layout/required-files", "a kind whose pattern matches no folder", expect="refuse", contains="the kind tool has nothing")
+@proof("layout/required-files", "a kind whose pattern matches no folder",
+       expect="refuse", contains="the kind tool has nothing")
 def _(world: World) -> None:
     _tools(world, setup=KIND_SETUP)
 
@@ -173,7 +176,8 @@ def _(world: World) -> None:
     _renamed(world)
 
 
-@proof("layout/retired-names", "the old name in a script, in capitals", expect="fail", contains="holds the retired name")
+@proof("layout/retired-names", "the old name in a script, in capitals",
+       expect="fail", contains="holds the retired name")
 def _(world: World) -> None:
     _renamed(world)
     world.write("scripts/build.sh", "echo building OLD-TOOLS\n")
@@ -195,7 +199,8 @@ def _(world: World) -> None:
     world.write("docs/about.md", "This project was called old-tools until 2026.\n")
 
 
-@proof("layout/retired-names", "a folder still named the old way", expect="fail", contains="the path holds the retired name")
+@proof("layout/retired-names", "a folder still named the old way",
+       expect="fail", contains="the path holds the retired name")
 def _(world: World) -> None:
     _renamed(world)
     world.write("docs/old-tools/notes.md", "# Notes\n")
