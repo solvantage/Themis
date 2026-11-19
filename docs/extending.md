@@ -40,7 +40,14 @@ max_age_days = 30
 
 A value with no stricter direction, such as a folder name, cannot be classified. Setting it for
 the first time turns a rule on, which is a tightening. Changing it afterwards is treated as a
-weakening, because a path pointed somewhere else can hide what the rule was guarding.
+weakening, because a path pointed somewhere else can hide what the rule was guarding. `work` is a
+set that requires: one pattern or a list, and another pattern added is a tightening.
+
+A pack's own table has no stated directions, so it is read by shape. A new table, key or list
+entry is a tightening: it names more for the rules to check. A removal, or a changed value, is a
+weakening. Two core tables are read their own way: a new `[[suite.skips]]` entry is a weakening
+and a removed one a tightening; any change to `[homes]` is a weakening, since it moves where
+records are read. A rule's `since` set for the first time stays a weakening.
 
 ### Standards
 
@@ -110,7 +117,12 @@ An external check is held to the same laws as a native rule.
   output its declared parser cannot read.
 - **It is proven.** A plant edits a file in a copy of the repository, and the check must then
   fail, with the expected text in its output. That last part is what keeps the proof strict: the check must fail
-  for the planted reason, not for any reason.
+  for the planted reason, not for any reason. A plant does one thing to one file: `append`,
+  `content`, `delete`, or `find` with `replace`. With `stage = true` it also stages that file in
+  the copy, so a check that reads only what is staged (a pre-commit guard) is proven on it.
+- **Its copy holds what git carries.** The copy has the tracked files and the untracked ones that
+  are not ignored, as the working tree holds them, and a git folder of its own. Ignored data, such
+  as a results cache, stays behind, so a large one never slows a proof.
 - **It is protected.** The files named in `command` join the protected paths, so no agent role
   can edit the script that judges its own work.
 - **It is locked.** The command and the hash of its script are part of the configuration hash.

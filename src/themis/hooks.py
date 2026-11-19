@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
+import stat
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -110,27 +113,29 @@ def _flag(words: list[str], name: str) -> str | None:
     return None
 
 
-def _relative(word: str, root: Path) -> str | None:
-    """A word as a repository path, or None when it is not inside the repository."""
+def _relative(word: str, root: Path, cwd: Path | None = None) -> str | None:
+    """A word as a repository path, or None when it is not inside the repository. A relative word
+    is read from the folder the command runs in, which is the root unless the host says otherwise."""
     if not word or word.startswith("-"):
         return None
     candidate = Path(word).expanduser()
-    absolute = candidate if candidate.is_absolute() else root / candidate
+    absolute = candidate if candidate.is_absolute() else (cwd or root) / candidate
     try:
         return absolute.resolve().relative_to(root.resolve()).as_posix()
     except (ValueError, OSError):
         return None
 
 
-def judge_command(command: str, root: Path, protected: list[str]) -> str | None:
-    """Why the owner must approve this shell command, or None when Themis has no objection."""
+def judge_command(command: str, root: Path, protected: list[str], cwd: Path | None = None) -> str | None:
+    """Why the owner must approve this shell command, or None when Themis has no objection. `cwd`
+    is the folder the command runs in, for its relative paths; the root, when not given."""
     simple = _simple_commands(command)
     if simple is None:
         return "Themis cannot read this command, so it cannot say it is safe."
     for words in simple:
         program, args = _program(words)
         if program in SHELLS and "-c" in args and args.index("-c") + 1 < len(args):
-            inner = judge_command(args[args.index("-c") + 1], root, protected)
+            inner = judge_command(args[args.index("-c") + 1], root, protected, cwd)
             if inner:
                 return inner
         # Behind a wrapper such as sudo or xargs, the real program is somewhere among the words.
@@ -165,7 +170,7 @@ def judge_command(command: str, root: Path, protected: list[str]) -> str | None:
         if program in WRITERS or (program in IN_PLACE and any(arg.startswith("-i") for arg in args)):
             targets += args
         for target in targets:
-            name = _relative(target, root)
+            name = _relative(target, root, cwd)
             if name and paths.matches_any(name, protected):
                 return f"This command writes to {name}, which only the owner changes."
     return None
@@ -181,16 +186,30 @@ def _protected(root: Path) -> list[str]:
     return list(configguard.ALWAYS_PROTECTED)
 
 
+def project_root(given: str | None, project_dir: str | None, cwd: str | None) -> Path:
+    """The project a hook judges. The root named with --root, else the host's project folder
+    (`$CLAUDE_PROJECT_DIR`), else the nearest folder at or above the shell's folder that holds a
+    manifest, else the shell's folder. The shell's folder alone is never trusted: from outside the
+    project it would find no manifest, and let a protected edit through."""
+    for named in (given, project_dir):
+        if named:
+            return Path(named).expanduser().resolve()
+    start = Path(cwd or ".").expanduser().resolve()
+    return next((folder for folder in (start, *start.parents) if (folder / manifests.MANIFEST_FILE).is_file()), start)
+
+
 def pretool(payload: dict[str, Any], root: Path) -> dict[str, Any] | None:
-    """The answer to a tool call: an "ask" with its reason, or None to leave the call alone."""
+    """The answer to a tool call: an "ask" with its reason, or None to leave the call alone. The
+    payload's cwd is used only to read the call's relative paths."""
     if not (root / manifests.MANIFEST_FILE).is_file():
         return None
     tool, given = payload.get("tool_name", ""), payload.get("tool_input", {}) or {}
+    cwd = (root / str(payload["cwd"])).resolve() if payload.get("cwd") else root
     reason = None
     if tool == "Bash":
-        reason = judge_command(str(given.get("command", "")), root, _protected(root))
+        reason = judge_command(str(given.get("command", "")), root, _protected(root), cwd)
     elif tool in ("Write", "Edit", "NotebookEdit", "MultiEdit"):
-        name = _relative(str(given.get("file_path") or given.get("notebook_path") or ""), root)
+        name = _relative(str(given.get("file_path") or given.get("notebook_path") or ""), root, cwd)
         if name and paths.matches_any(name, _protected(root)):
             reason = f"{name} is a protected file, which only the owner changes."
     if reason is None:
@@ -292,7 +311,8 @@ def wanted(command: str) -> dict[str, list[dict[str, Any]]]:
 
 
 def default_command(root: Path) -> str:
-    return "uv run --quiet themis" if (root / "uv.lock").is_file() else "themis"
+    """How a hook starts themis: through uv, held to its lock file, in a uv project."""
+    return "uv run --frozen --quiet themis" if (root / "uv.lock").is_file() else "themis"
 
 
 def _has(entries: Any, action: str) -> bool:
@@ -333,3 +353,71 @@ def install(root: Path, command: str | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+# -- git hooks ----------------------------------------------------------------------------------
+
+GIT_HOOKS = ".githooks"
+#: Each git hook, the check it runs, and why.
+GIT_EVENTS = {
+    "pre-commit": ("check --changed", "the rules, and the external checks whose paths changed, before each commit"),
+    "pre-push": ("check", "every rule and every external check, before each push"),
+}
+_RUNS_THEMIS = re.compile(r"\bthemis\b\S*\s+check\b")  # `themis check`, also as `python -m themis.cli check`
+
+
+def git_hook(command: str, event: str) -> str:
+    check, why = GIT_EVENTS[event]
+    return (f"#!/bin/sh\n# Written by `themis hooks install --git`: {why}. Never bypass it with --no-verify.\n"
+            f'cd "$(git rev-parse --show-toplevel)" || exit 1\nexec {command} {check}\n')
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=False)
+
+
+def install_git(root: Path, folder: str = GIT_HOOKS, command: str | None = None, *, force: bool = False) -> list[Path]:
+    """Write the git hooks into a folder of the repository and point git at it (core.hooksPath).
+    A different hook already there is kept, unless `force`: raises ValueError naming it."""
+    if _git(root, "rev-parse", "--git-dir").returncode != 0:
+        raise ValueError("this folder is not a git repository")
+    target = (root / folder).resolve()
+    if root.resolve() != target and root.resolve() not in target.parents:
+        raise ValueError(f"{folder} is outside the repository")
+    wanted = {event: git_hook(command or default_command(root), event) for event in GIT_EVENTS}
+    differs = [event for event in GIT_EVENTS
+               if (target / event).is_file() and (target / event).read_text(encoding="utf-8") != wanted[event]]
+    if differs and not force:
+        raise ValueError(f"{folder}/{differs[0]} already holds a different hook; keep it, or run again with --force")
+    target.mkdir(parents=True, exist_ok=True)
+    written = []
+    for event, text in wanted.items():
+        path = target / event
+        path.write_text(text, encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        written.append(path)
+    done = _git(root, "config", "core.hooksPath", target.relative_to(root.resolve()).as_posix() or ".")
+    if done.returncode != 0:
+        raise ValueError(f"git did not take core.hooksPath: {done.stderr.strip()}")
+    return written
+
+
+def git_missing(root: Path, folder: str) -> list[tuple[str, str]]:
+    """What keeps the declared git hooks from running Themis, as (what, where) pairs."""
+    found = []
+    target = (root / folder).resolve()
+    said = _git(root, "config", "--get", "core.hooksPath").stdout.strip()
+    if not said or (root / said).resolve() != target:
+        found.append((f"git does not run the hooks in {folder}: core.hooksPath is {said or 'not set'}", folder))
+    for event, (check, _) in GIT_EVENTS.items():
+        path, where = target / event, f"{folder.strip('/')}/{event}"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            found.append((f"the {event} git hook is not installed", where))
+            continue
+        if not os.access(path, os.X_OK):
+            found.append((f"the {event} git hook is not executable, so git skips it", where))
+        if not _RUNS_THEMIS.search(text):
+            found.append((f"the {event} git hook does not run `themis {check}`", where))
+    return found

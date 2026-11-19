@@ -161,7 +161,7 @@ def decided(tmp_path: Path, edge: float) -> World:
 def test_the_gate_issues_the_decision_from_the_studys_numbers_and_it_checks_clean(tmp_path: Path) -> None:
     world = decided(tmp_path, edge=1.0)
     assert run(world, "decide", "a", "--gate", "entry") == EXIT_PASS
-    stored = json.loads((world.root / "decisions/a.json").read_text())
+    stored = json.loads((world.root / "decisions/work-a.json").read_text())
     assert (stored["decision"], stored["verdict"]) == ("promote", "pass")
     assert verdict(world, "decision/issued-by-gate") is Verdict.PASS
 
@@ -169,7 +169,7 @@ def test_the_gate_issues_the_decision_from_the_studys_numbers_and_it_checks_clea
 def test_noise_is_not_promoted_and_a_kinder_decision_typed_over_it_fails(tmp_path: Path) -> None:
     world = decided(tmp_path, edge=0.0)
     assert run(world, "decide", "a", "--gate", "entry") in (EXIT_FAIL, EXIT_REFUSE)
-    path = world.root / "decisions/a.json"
+    path = world.root / "decisions/work-a.json"
     stored = json.loads(path.read_text())
     assert stored["decision"] != "promote"
     path.write_text(json.dumps({**stored, "decision": "promote", "verdict": "pass"}))

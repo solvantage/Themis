@@ -1,0 +1,142 @@
+# Themis reads this file strictly: an unknown key is an error, never a silent default.
+# A fixture: the structure of a downstream project's manifest, written for 0.1.0 and held at level 0 (observe
+# only), with neutral names. tests/test_downstream.py loads it with this version: it must still be valid and
+# hash to the lock 0.1.0 wrote. Change it only to follow that project's manifest, and never its values' shape.
+
+[project]
+name = "downstream"
+packs = ["trading"]
+
+[rules]
+"config/valid" = "enforce"
+# Rules the project will enforce that have nothing to inspect yet. An enforced rule that inspects nothing refuses,
+# and adding empty = "allow" later is a weakening, so it is set now, before the lock. The level stays warn.
+"order/sealed-first" = { level = "warn", empty = "allow" }
+"order/unchanged" = { level = "warn", empty = "allow" }
+"holdout/guarded" = { level = "warn", empty = "allow" }
+"holdout/one-signal-look" = { level = "warn", empty = "allow" }
+"grant/required" = { level = "warn", empty = "allow" }
+"grant/single-use" = { level = "warn", empty = "allow" }
+"decision/issued-by-gate" = { level = "warn", empty = "allow" }
+"trials/settings-counted" = { level = "warn", empty = "allow" }
+"validity/confirm-on-real-ticks" = { level = "warn", empty = "allow" }
+"scorecard/believable" = { level = "warn", empty = "allow" }
+"scorecard/explainer" = { level = "warn", empty = "allow" }
+
+# Beyond Themis's own list and the scripts the external checks run: an agent's edit to these stops for the owner.
+[config]
+protected = [
+  ".githooks/**",
+  "pyproject.toml",
+  "uv.lock",
+  "scripts/ship.sh",
+  "scripts/repo_guard.py",
+  "scripts/docs_check.py",
+  ".markdownlint-cli2.jsonc",
+  "**/.markdownlint*",
+  ".themis/**",
+]
+
+[agents]
+host = "claude"
+instructions = "CLAUDE.md"
+
+[suite]
+command = "uv run --frozen pytest -q scripts/tests"
+
+[[suite.skips]]
+test = "scripts/tests/test_replay.py::ReplayTest::*"
+reason = "they replay runs kept outside the repository; a later change tracks that data or declares this skip again"
+until = "2026-12-19"
+
+[[suite.skips]]
+test = "scripts/tests/test_replay.py::FilterTest::test_filter_as_tested"
+reason = "it reads a tested set kept outside the repository; a later change tracks it or declares this skip again"
+until = "2026-12-19"
+
+[[suite.skips]]
+test = "scripts/tests/test_picker.py::PickerTest::test_flip_matches_the_plain_version"
+reason = "it needs libraries only a paused group's own environment holds"
+until = "2027-05-19"
+
+[[suite.skips]]
+test = "scripts/tests/test_picker.py::PickerTest::test_screen_folds_refuse_a_later_row"
+reason = "it needs libraries only a paused group's own environment holds"
+until = "2027-05-19"
+
+[[checks.external]]
+id = "ext/docs"
+description = "Every Markdown link and anchor resolves, every page is reachable, and no line holds a bare $ pair."
+command = ["python3", "-I", "scripts/docs_check.py", "--style"]
+output = "path-line-message"
+timeout_s = 120
+level = "warn"
+
+[[checks.external.proofs]]
+name = "a broken link is caught"
+plant = { file = "docs/README.md", append = "\n[gone](nowhere-planted.md)\n" }
+expect = "fail"
+expect_output = "broken link nowhere-planted\\.md"
+
+[[checks.external.proofs]]
+name = "a bare $ pair is caught"
+plant = { file = "README.md", append = "\nFrom $10,000 to $12,000.\n" }
+expect = "fail"
+expect_output = "bare \\$ pair"
+
+[[checks.external.proofs]]
+name = "a page nothing links to is caught"
+plant = { file = "docs/planted-orphan.md", content = "# Orphan\n" }
+expect = "fail"
+expect_output = "docs/planted-orphan\\.md:1: not reachable"
+
+[[checks.external.proofs]]
+name = "a markdownlint config beside the locked one is caught"
+plant = { file = ".markdownlint.jsonc", content = "{ \"default\": false }\n" }
+expect = "fail"
+expect_output = "\\.markdownlint\\.jsonc:1: a markdownlint config file outside"
+
+[[checks.external.proofs]]
+name = "the docs as they are pass"
+expect = "pass"
+
+[[checks.external]]
+id = "ext/markdownlint"
+description = "Every Markdown page passes markdownlint with the repo's rules."
+command = ["npx", "--yes", "markdownlint-cli2@0.18.1", "--config", ".markdownlint-cli2.jsonc"]
+when = ["**/*.md", ".markdownlint-cli2.jsonc"]
+timeout_s = 300
+level = "warn"
+
+[[checks.external.proofs]]
+name = "a heading with no space after its # is caught"
+plant = { file = "docs/README.md", append = "\n#Planted heading\n" }
+expect = "fail"
+expect_output = "MD018"
+
+[[checks.external.proofs]]
+name = "the pages as they are pass"
+expect = "pass"
+
+[[checks.external]]
+id = "ext/repo-guard"
+description = "No build output, zip, .env file (but .env.example), vendor manual or local data file is staged or waiting to be added."
+command = ["python3", "-I", "scripts/repo_guard.py", "--staged", "--untracked"]
+timeout_s = 60
+level = "warn"
+
+[[checks.external.proofs]]
+name = "a secrets file left where `git add -A` would take it is caught"
+plant = { file = ".env.production", content = "API_KEY=planted\n" }
+expect = "fail"
+expect_output = "\\.env\\.production: a secrets file"
+
+[[checks.external.proofs]]
+name = "a zip outside the repo root is caught"
+plant = { file = "tools/planted/drop.zip", content = "PK\n" }
+expect = "fail"
+expect_output = "drop\\.zip: a zip"
+
+[[checks.external.proofs]]
+name = "the tree as it is passes"
+expect = "pass"

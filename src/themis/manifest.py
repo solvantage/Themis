@@ -28,7 +28,8 @@ COMMON_RULE_KEYS = {
     "shadow": str,
 }
 
-PLANT = {"file": Required(str), "append": str, "find": str, "replace": str, "content": str, "delete": bool}
+PLANT = {"file": Required(str), "append": str, "find": str, "replace": str, "content": str, "delete": bool,
+         "stage": bool}
 EXTERNAL = {
     "id": Required(str),
     "description": Required(str),
@@ -57,7 +58,7 @@ CORE = {
     "config": {"protected": [str]},
     "checks": {"external": [EXTERNAL]},
     "adapters": {"*": {"*": ANY}},
-    "agents": {"host": Choice("claude"), "instructions": str},
+    "agents": {"host": Choice("claude"), "instructions": str, "git_hooks": str},
 }
 
 

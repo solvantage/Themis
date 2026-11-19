@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -149,6 +149,28 @@ class Context:
         """The date the rule binds from, when the project set one."""
         value = self.params.get("since")
         return dt.date.fromisoformat(value) if isinstance(value, str) else None
+
+    def predates(self, files: Iterable[str]) -> bool:
+        """True when the rule binds from a date (its `since`) and the first of these files reached
+        the main line in a commit dated before that day: work begun before the rule did is not held
+        to it. Without a `since`, a main line, or any of the files on it yet, nothing predates the
+        rule. A rule passes a unit's files, its seal, or one record's path."""
+        if self.since is None:
+            return False
+        main = self.git.main_ref(self.params.get("main") or self.manifest.project.get("main"))
+        if main is None:
+            return False
+        arrivals = self.git.arrivals(main)
+        first = min((arrivals[name] for name in files if name in arrivals), default=None)
+        if first is None:
+            return False
+        date = self.git.commit_date(self.git.main_line(main)[first])
+        return date is not None and date < self.since.isoformat()
+
+    def bound(self, units: Mapping[str, list[str]]) -> dict[str, list[str]]:
+        """The units this rule binds, as `themis.work.units` returns them: those that do not
+        predate its `since`."""
+        return {unit: files for unit, files in units.items() if not self.predates(files)}
 
     @functools.cached_property
     def git(self) -> Git:

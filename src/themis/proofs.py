@@ -46,6 +46,7 @@ class World:
         self.root = Path(root)
         self._started = False
         self._clock = 0
+        self._day = "2026-01-01"
 
     # -- files ----------------------------------------------------------------------------------
 
@@ -72,12 +73,16 @@ class World:
             self._started = True
             self.git("init", "-q", "-b", "main")
         self._clock += 1
-        stamp = f"2026-01-01T00:{self._clock // 60:02d}:{self._clock % 60:02d}+00:00"
+        stamp = f"{self._day}T00:{self._clock // 60:02d}:{self._clock % 60:02d}+00:00"
         env = {**os.environ, **_GIT_ENV, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
         done = subprocess.run(["git", *args], cwd=self.root, env=env, capture_output=True, text=True, check=False)
         if done.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed in a proof world: {done.stderr.strip()}")
         return done.stdout
+
+    def on(self, day: str) -> None:
+        """Date the commits that follow on this day (YYYY-MM-DD), so a world's history spans time."""
+        self._day = day
 
     def commit(self, message: str = "work") -> str:
         """Commit everything on the current branch. The first commit starts the repository on `main`."""
@@ -183,7 +188,8 @@ class PlantError(Exception):
 
 
 def apply_plant(root: Path, plant: dict[str, Any]) -> None:
-    """Change one file in a copy. Exactly one action: append, content, delete, or find and replace."""
+    """Change one file in a copy. Exactly one action: append, content, delete, or find and replace.
+    With `stage = true`, `run_external` then stages the change in the copy."""
     target = (root / plant["file"]).resolve()
     if root.resolve() not in target.parents:
         raise PlantError(f"{plant['file']} is outside the repository")
@@ -207,14 +213,83 @@ def apply_plant(root: Path, plant: dict[str, Any]) -> None:
         target.write_text(text.replace(plant["find"], plant["replace"]), encoding="utf-8")
 
 
+#: Variables that point git at a repository. A proof's git commands must reach the copy only,
+#: even when `themis prove` runs inside a git hook, which sets them for the original.
+_GIT_LOCATORS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
+                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX")
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {key: value for key, value in os.environ.items() if key not in _GIT_LOCATORS}
+    return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+
+
+def _carried(root: Path) -> list[str] | None:
+    """What git would carry: tracked files and untracked ones that are not ignored, as the working
+    tree holds them. None when the folder is not the top of a git repository."""
+    top = _git(root, "rev-parse", "--show-toplevel")
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != root.resolve():
+        return None
+    listed = _git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    if listed.returncode != 0:
+        return None
+    names = sorted({name for name in listed.stdout.split("\0") if name})
+    return [name for name in names
+            if not set(NOT_COPIED).intersection(name.split("/"))
+            and (os.path.islink(root / name) or (root / name).is_file())]
+
+
+def _copy_git_folder(root: Path, target: Path) -> None:
+    """The copy's own git folder: history, refs, index and HEAD, and nothing that points back."""
+    dot = root / ".git"
+    if dot.is_dir():
+        shutil.copytree(dot, target / ".git", symlinks=True)
+        return
+    # A linked worktree or a submodule: .git is a file naming a folder elsewhere. The copy gets the
+    # shared repository, with this checkout's HEAD and index, so nothing done in it reaches the original.
+    own = Path(_git(root, "rev-parse", "--absolute-git-dir").stdout.strip())
+    common = Path(_git(root, "rev-parse", "--git-common-dir").stdout.strip())
+    common = common if common.is_absolute() else (root / common).resolve()
+    shutil.copytree(common, target / ".git", symlinks=True,
+                    ignore=lambda folder, names: ["worktrees"] if Path(folder) == common else [])
+    for name in ("HEAD", "index", "ORIG_HEAD", "MERGE_HEAD"):
+        if (own / name).is_file():
+            shutil.copy2(own / name, target / ".git" / name)
+    _git(target, "config", "--unset", "core.worktree")
+
+
 def copy_repository(root: Path, into: Path) -> Path:
-    """A private copy of a repository, history included, with its dependency folders linked in."""
+    """A private copy of a repository, history included, with its dependency folders linked in.
+
+    In a git repository only what git would carry is copied: the tracked files and the untracked
+    ones that are not ignored, as the working tree holds them. Ignored data, however large, stays
+    behind. The copy has a git folder of its own, so a proof that stages a file stages it there.
+    """
     target = into / "repo"
-    shutil.copytree(root, target, symlinks=True, ignore=shutil.ignore_patterns(*NOT_COPIED))
+    carried = _carried(root)
+    if carried is None:
+        shutil.copytree(root, target, symlinks=True, ignore=shutil.ignore_patterns(*NOT_COPIED))
+    else:
+        target.mkdir(parents=True)
+        _copy_git_folder(root, target)
+        for name in carried:
+            source, copy = root / name, target / name
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            if os.path.islink(source):
+                os.symlink(os.readlink(source), copy)
+            else:
+                shutil.copy2(source, copy)
     for name in LINKED:
-        if (root / name).is_dir():
+        if (root / name).is_dir() and not os.path.lexists(target / name):
             os.symlink(root / name, target / name)
     return target
+
+
+def stage_plant(root: Path, plant: dict[str, Any]) -> None:
+    """Stage the planted file in the copy, as `git add` would, for a check that reads what is staged."""
+    done = _git(root, "add", "-A", "--", plant["file"])
+    if done.returncode != 0:
+        raise PlantError(f"{plant['file']} could not be staged: {done.stderr.strip() or 'the copy is not a git repository'}")
 
 
 def run_external(manifest: manifests.Manifest) -> list[Outcome]:
@@ -229,6 +304,8 @@ def run_external(manifest: manifests.Manifest) -> list[Outcome]:
                 try:
                     if "plant" in proof:
                         apply_plant(copy, proof["plant"])
+                        if proof["plant"].get("stage"):
+                            stage_plant(copy, proof["plant"])
                 except PlantError as error:
                     outcomes.append(Outcome(check.id, proof["name"], expect, None, False, f"the plant could not be applied: {error}"))
                     continue

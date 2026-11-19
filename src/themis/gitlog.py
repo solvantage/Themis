@@ -82,27 +82,30 @@ class Git:
     def arrivals(self, ref: str) -> dict[str, int]:
         """For each file, the position on the main line of the commit that first brought it.
 
-        Position 0 is the oldest commit. A merge is read against its first parent, so every file a
-        pull request added arrives at that pull request's merge.
+        Position 0 is the oldest commit, and a position indexes `main_line`, which holds every
+        commit of the main line: one that adds nothing still takes its place. A merge is read
+        against its first parent, so every file a pull request added arrives at that pull request's
+        merge.
         """
         out = self.run("log", "--first-parent", "-m", "-M", "--diff-filter=AR", "--name-status", "--format=@%H", ref)
         if out is None:
             return {}
-        commits: list[list[str]] = []
+        # The log lists only the commits that add or rename a file, so each one is placed by its own
+        # hash on the whole main line, never by its rank among those few.
+        positions = {commit: position for position, commit in enumerate(self.main_line(ref))}
+        found: dict[str, int] = {}
+        position: int | None = None
         for line in out.splitlines():
             if line.startswith("@"):
-                commits.append([])
-            elif line.strip() and commits:
-                commits[-1].append(line.split("\t")[-1])
-        found: dict[str, int] = {}
-        for position, names in enumerate(reversed(commits)):
-            for name in names:
-                found.setdefault(name, position)
+                position = positions.get(line[1:].strip())
+            elif line.strip() and position is not None:
+                name = line.split("\t")[-1]
+                found[name] = min(found.get(name, position), position)
         return found
 
     @functools.lru_cache(maxsize=None)
     def main_line(self, ref: str) -> list[str]:
-        """The commits of the main line, oldest first: positions match `arrivals`."""
+        """Every commit of the main line, oldest first: an `arrivals` position indexes this list."""
         out = self.run("rev-list", "--first-parent", "--reverse", ref)
         return (out or "").split()
 

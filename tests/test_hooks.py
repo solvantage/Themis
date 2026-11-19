@@ -206,7 +206,7 @@ def test_installing_adds_the_three_hooks_once_and_keeps_other_settings(tmp_path:
 def test_a_project_run_with_uv_gets_hooks_that_run_through_uv(tmp_path: Path) -> None:
     world = project(tmp_path)
     world.write("uv.lock", "")
-    assert hooks.default_command(world.root) == "uv run --quiet themis"
+    assert hooks.default_command(world.root) == "uv run --frozen --quiet themis"
 
 
 # --- planted bugs ------------------------------------------------------------------------------

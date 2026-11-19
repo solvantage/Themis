@@ -60,9 +60,11 @@ def indexed(ctx: Context) -> None:
         ctx.refuse("the index file is missing, or it cannot be read as text", where=index,
                    fix="create the index, and list every unit of work in it")
         return
-    for unit in sorted(_units(ctx)):
+    units = _units(ctx)
+    for unit in sorted(ctx.bound(units)):  # a unit begun before the rule's start date is not held to it
         ctx.inspect()
-        name = unit.rsplit("/", 1)[-1]
+        # A folder name several units share names none of them: such a unit is listed by its path.
+        name = unit if work.named(units, unit.rsplit("/", 1)[-1]) is None else unit.rsplit("/", 1)[-1]
         if not _named(name, text):
             ctx.breach(f"the unit {name} does not appear in the index", where=unit,
                        fix=f"add a line for {name} to {index}: what was tried, and what came of it")
@@ -82,6 +84,44 @@ def _(world: World) -> None:
     world.write("work/run-1/PLAN.md", PLAN)
     world.write("work/run-2/PLAN.md", PLAN)
     world.write("work/INDEX.md", "# Work\n\n- [run-1](run-1/PLAN.md): the first try\n- run-2: the second try\n")
+
+
+@proof("registry/indexed", "units that share a folder name are each listed by their path", expect="pass")
+def _(world: World) -> None:
+    world.manifest(INDEXED.replace('"work/*"', '"work/*/tune"'))
+    world.write("work/a/tune/PLAN.md", PLAN)
+    world.write("work/b/tune/PLAN.md", PLAN)
+    world.write("work/INDEX.md", "- work/a/tune: the first setup\n- work/b/tune: the second\n")
+
+
+@proof("registry/indexed", "a folder name units share does not list them", expect="fail",
+       contains="the unit work/b/tune does not appear in the index")
+def _(world: World) -> None:
+    world.manifest(INDEXED.replace('"work/*"', '"work/*/tune"'))
+    world.write("work/a/tune/PLAN.md", PLAN)
+    world.write("work/b/tune/PLAN.md", PLAN)
+    world.write("work/INDEX.md", "- work/a/tune: the first setup\n- tune: every setup\n")
+
+
+@proof("registry/indexed", "a unit from before the start date need not be listed; a later one must", expect="fail",
+       contains="the unit run-2 does not appear in the index")
+def _(world: World) -> None:
+    world.manifest(INDEXED + '    since = "2026-06-01"\n')
+    world.write("work/run-1/PLAN.md", PLAN)
+    world.write("work/INDEX.md", "# Work\n")
+    world.commit("before the rule")
+    world.on("2026-07-01")
+    world.write("work/run-2/PLAN.md", PLAN)
+    world.commit("after the rule")
+
+
+@proof("registry/indexed", "only units from before the start date: nothing to hold", expect="refuse",
+       contains="nothing was inspected")
+def _(world: World) -> None:
+    world.manifest(INDEXED + '    since = "2026-06-01"\n')
+    world.write("work/run-1/PLAN.md", PLAN)
+    world.write("work/INDEX.md", "# Work\n")
+    world.commit("before the rule")
 
 
 @proof("registry/indexed", "a unit the index does not list", expect="fail",

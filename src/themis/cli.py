@@ -86,8 +86,50 @@ def command_check(args: argparse.Namespace) -> int:
     return report.exit_code
 
 
+def _catalogue(manifest: manifests.Manifest | None) -> str:
+    """Every rule of the core and of every pack Themis can find, as Markdown tables."""
+    import pkgutil
+    from importlib import metadata
+
+    from themis import gates, pack, packs
+
+    gates.load_all()
+    names = {found.name for found in pkgutil.iter_modules(packs.__path__) if found.ispkg}
+    names |= {entry.name for entry in metadata.entry_points(group="themis.packs")}
+    for name in sorted(names):
+        try:
+            pack.load(name)
+        except pack.PackError:
+            continue  # a pack that cannot load has no rules to list; `themis doctor` names it
+    usable = manifest if manifest is not None and manifest.present and not manifest.problems else None
+    active = {rule.id for rule in usable.active_rules()} if usable else set()
+    owners = sorted({rule.pack for rule in RULES.values()}, key=lambda owner: (owner != "core", owner))
+    lines = [
+        "# Themis rule catalogue", "",
+        f"Written by `themis describe --markdown` (themis {__version__}), from the rules themselves: every rule of "
+        "the core and of each pack, with its gate, its promise, its level and the proofs it carries.", "",
+        "Level is " + (f"the one project {usable.name} sets; `pack off` marks a pack it has not turned on."
+                       if usable else "the default: a rule a project does not name runs at `warn`."), "",
+    ]
+    for owner in owners:
+        rules = sorted((rule for rule in RULES.values() if rule.pack == owner), key=lambda rule: rule.id)
+        gate_names = {rule.gate for rule in rules}
+        lines += [f"## {owner}", "", f"{len(rules)} rules in {len(gate_names)} gates.", "",
+                  "| Rule | Gate | Promise | Level | Proofs |", "| --- | --- | --- | --- | --- |"]
+        for rule in rules:
+            level = (usable.setting(rule).level if rule.id in active else "pack off") if usable else "warn"
+            promise = rule.promise.replace("|", "\\|")
+            lines.append(f"| `{rule.id}` | {rule.gate} | {promise} | {level} | {len(PROOFS.get(rule.id, []))} |")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def command_describe(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    if args.markdown:
+        found = manifests.load(root)
+        print(_catalogue(found), end="")
+        return EXIT_PASS
     manifest = _load(root)
     if manifest is None:
         return EXIT_REFUSE
@@ -111,16 +153,15 @@ def command_describe(args: argparse.Namespace) -> int:
         if rule.gate != gate:
             gate = rule.gate
             lines += ["", f" {gate}"]
-        result = engine.run_rule(rule, manifest) if args.status else None
-        setting = manifest.setting(rule)
+        # A rule can learn it is not configured only by running: a table it reads may be missing. So
+        # each rule runs, with or without --status, and both count the same.
+        result = engine.run_rule(rule, manifest)
         standing = proofs.standing(rule.id)
-        configured = not [name for name in rule.requires if setting.params.get(name) in (None, "", [], {})]
-        state = setting.level if configured else "not configured"
-        if result is not None and result.status == "not configured":
-            state = "not configured"
+        state = "not configured" if result.status == "not configured" else manifest.setting(rule).level
         if standing != "proven" or state in ("off", "not configured"):
             unproven += 1
-        lines.append(f"   {rule.id:<34} {state:<15} {standing}")
+        now = f"  now: {result.verdict.value}" if args.status and result.verdict is not None else ""
+        lines.append(f"   {rule.id:<34} {state:<15} {standing}{now}")
         lines.append(f"       {rule.promise}")
     if manifest.external:
         lines += ["", " ext"]
@@ -267,14 +308,19 @@ def _param(manifest: manifests.Manifest, rule_id: str, name: str) -> object:
     return manifest.setting(rule).params.get(name) if rule else None
 
 
-def _work_pattern(manifest: manifests.Manifest) -> str | None:
-    """Where this project keeps its units of work: the first place that says so."""
+def _work_patterns(manifest: manifests.Manifest) -> list[str]:
+    """Where this project keeps its units of work, one pattern or several: the first place that says so."""
+    from themis import work
+
     for rule_id in ("order/logged-first", "order/sealed-first", "claims/receipt", "ledger/complete"):
-        found = _param(manifest, rule_id, "work")
+        found = work.patterns(_param(manifest, rule_id, "work"))  # type: ignore[arg-type]
         if found:
-            return str(found)
-    return next((loaded_table["work"] for loaded in manifest.packs
-                 if (loaded_table := manifest.table(loaded.name)).get("work")), None)
+            return found
+    for loaded in manifest.packs:
+        found = work.patterns(manifest.table(loaded.name).get("work"))
+        if found:
+            return found
+    return []
 
 
 def _unit(root: Path, manifest: manifests.Manifest, name: str) -> str | None:
@@ -282,15 +328,15 @@ def _unit(root: Path, manifest: manifests.Manifest, name: str) -> str | None:
     from themis import work
     from themis.gitlog import Git
 
-    pattern = _work_pattern(manifest)
-    if not pattern:
+    patterns = _work_patterns(manifest)
+    if not patterns:
         _say("themis: this project has not said where its work lives. Set `work` for a pack or for order/logged-first.")
         return None
-    units = work.units(Git(root).all_files(), pattern)
+    units = work.units(Git(root).all_files(), patterns)
     wanted = name.strip("/")
-    found = [unit for unit in units if unit == wanted or unit.rsplit("/", 1)[-1] == wanted]
+    found = [unit for unit in units if unit == wanted] or [unit for unit in units if unit.rsplit("/", 1)[-1] == wanted]
     if len(found) != 1:
-        _say(f"themis: {name!r} names {len(found)} unit(s) of work under {pattern}.")
+        _say(f"themis: {name!r} names {len(found)} unit(s) of work under {', '.join(patterns)}.")
         return None
     return found[0]
 
@@ -342,13 +388,13 @@ def command_cite(args: argparse.Namespace) -> int:
     if ready is None:
         return EXIT_REFUSE
     root, manifest = ready
-    pattern = _work_pattern(manifest)
-    if not pattern:
+    patterns = _work_patterns(manifest)
+    if not patterns:
         _say("themis: this project has not said where its work lives, so no record can be cited.")
         return EXIT_REFUSE
     metrics = str(_param(manifest, "claims/receipt", "metrics") or "results/metrics.json")
     try:
-        print(claims.cite(root, work.units(Git(root).all_files(), pattern), args.work, args.key, metrics, args.decimals))
+        print(claims.cite(root, work.units(Git(root).all_files(), patterns), args.work, args.key, metrics, args.decimals))
     except ValueError as error:
         _say(f"themis: nothing to cite: {error}")
         return EXIT_REFUSE
@@ -377,12 +423,22 @@ def command_new(args: argparse.Namespace) -> int:
     if ready is None:
         return EXIT_REFUSE
     root, manifest = ready
-    pattern = _work_pattern(manifest)
+    patterns = _work_patterns(manifest)
     home = records.home_of(manifest, "ledger")
     folder = home.rsplit("/", 1)[0] if "/" in home else "."
-    if not pattern or "*" in folder or pattern.count("*") != 1:
+    if args.under:
+        if args.under.strip("/") not in patterns:
+            _say(f"themis: {args.under} is not one of the places work lives: {', '.join(patterns) or 'none is set'}.")
+            return EXIT_REFUSE
+        patterns = [args.under.strip("/")]
+    choices = [pattern for pattern in patterns if pattern.count("*") == 1]
+    if len(choices) > 1:
+        _say(f"themis: work lives in several places; name one with --under: {', '.join(choices)}.")
+        return EXIT_REFUSE
+    if not choices or "*" in folder:
         _say("themis: set where work lives (one * in the pattern) and where the ledger is, then log the unit again.")
         return EXIT_REFUSE
+    pattern = choices[0]
     today = dt.date.today().isoformat()
     name = f"{today}_{grants.slug(args.name)}"
     unit = pattern.replace("*", name)
@@ -446,7 +502,7 @@ def command_run(args: argparse.Namespace) -> int:
 
         read = sorted({name for pattern in rule_files for name in paths.select(git.all_files(), pattern)})
         receipt["rules_hash"] = rules_hash(root, read)
-    name = f"{unit.rsplit('/', 1)[-1]}-{at.replace(':', '').replace('-', '')[:15]}"
+    name = f"{work.file_name(unit)}-{at.replace(':', '').replace('-', '')[:15]}"
     receipts.write(root, "run", name, receipt, committed=True)
     if args.input and done.returncode == 0:
         inputs = {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in args.input}
@@ -458,11 +514,22 @@ def command_run(args: argparse.Namespace) -> int:
     return EXIT_PASS if done.returncode == 0 else EXIT_FAIL
 
 
+def _stored_work(path: Path) -> str | None:
+    """The work a stored decision names, or None when there is no readable decision there."""
+    import json
+
+    try:
+        found = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return str(found.get("work", "")).strip("/") if isinstance(found, dict) else None
+
+
 def command_decide(args: argparse.Namespace) -> int:
     """Ask a gate function for the decision on a unit's numbers, and store what it says."""
     import json
 
-    from themis import receipts
+    from themis import receipts, work
 
     ready = _ready(args)
     if ready is None:
@@ -504,7 +571,15 @@ def command_decide(args: argparse.Namespace) -> int:
             return EXIT_REFUSE
         record.update(decision=answer["decision"], verdict=answer["verdict"], gate_version=loaded.gate_versions.get(args.gate, "1"))
         record.update({key: answer[key] for key in ("enough_evidence", "reason", "numbers", "level") if key in answer})
-    path = root / "decisions" / f"{unit.replace('/', '-') if builder else unit.rsplit('/', 1)[-1]}.json"
+    # Named by the unit's whole path: two units that share a folder name keep a decision each.
+    path = root / "decisions" / f"{work.file_name(unit)}.json"
+    held = _stored_work(path)
+    if held is not None and held != unit:
+        _say(f"themis: REFUSE. {path.relative_to(root)} holds the decision of {held}, not of {unit}.")
+        return EXIT_REFUSE
+    earlier = root / "decisions" / f"{unit.rsplit('/', 1)[-1]}.json"
+    if earlier != path and _stored_work(earlier) == unit:
+        earlier.replace(path)  # a decision stored under 0.1.0's folder-name file moves to the unit's own name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     verdict = Verdict(str(record["verdict"]))
@@ -539,8 +614,21 @@ def command_hooks(args: argparse.Namespace) -> int:
     from themis import hooks
 
     root = Path(args.root).resolve()
-    if _load(root) is None:
+    manifest = _load(root)
+    if manifest is None:
         return EXIT_REFUSE
+    if args.git:
+        folder = args.path or hooks.GIT_HOOKS
+        try:
+            written = hooks.install_git(root, folder, args.run_with, force=args.force)
+        except (ValueError, OSError) as error:
+            _say(f"themis: the git hooks could not be installed: {error}")
+            return EXIT_REFUSE
+        names = ", ".join(path.relative_to(root.resolve()).as_posix() for path in written)
+        print(f"Installed the git hooks: {names}; core.hooksPath is {folder}. Commit them.")
+        if manifest.table("agents").get("git_hooks") != folder:
+            print(f'Declare them under [agents] as git_hooks = "{folder}", so agents/hooks-installed checks them.')
+        return EXIT_PASS
     try:
         path = hooks.install(root, args.run_with)
     except (ValueError, OSError) as error:
@@ -553,6 +641,7 @@ def command_hooks(args: argparse.Namespace) -> int:
 def command_hook(args: argparse.Namespace) -> int:
     """Called by the agent host, with the event as JSON on standard input."""
     import json
+    import os
 
     from themis import hooks
 
@@ -561,7 +650,8 @@ def command_hook(args: argparse.Namespace) -> int:
     except (ValueError, OSError):
         payload = {}
     payload = payload if isinstance(payload, dict) else {}
-    root = Path(payload.get("cwd") or args.root).resolve()
+    # The project is --root, else the host's project folder; the payload's cwd only places relative paths.
+    root = hooks.project_root(args.root, os.environ.get("CLAUDE_PROJECT_DIR"), payload.get("cwd"))
     if args.event == "pretool":
         answer = hooks.pretool(payload, root)
         if answer:
@@ -672,6 +762,9 @@ def command_doctor(args: argparse.Namespace) -> int:
         absent = hooks.missing(root)
         found += ["the host's settings file cannot be read"] if absent is None else [
             f"the {event} hook is not installed: run `themis hooks install`" for event in absent]
+    if manifest.present and not manifest.problems and manifest.table("agents").get("git_hooks") and git.is_repo:
+        found += [f"{what}: run `themis hooks install --git`"
+                  for what, _ in hooks.git_missing(root, manifest.table("agents")["git_hooks"])]
     for line in found:
         print(f" - {line}")
     print("Nothing is wrong with the setup." if not found else f"{len(found)} thing(s) to put right.")
@@ -695,7 +788,9 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--reporter", action="append", help="terminal, compact, json or sarif; add :FILE to write a file")
 
     describe = add("describe", command_describe, "List every gate, rule and proof, and what is not in force.")
-    describe.add_argument("--status", action="store_true", help="also run each rule, to show which are not configured")
+    describe.add_argument("--status", action="store_true", help="also show what each rule finds on this repository now")
+    describe.add_argument("--markdown", action="store_true",
+                          help="print the full catalogue, every core and pack rule, as Markdown tables")
 
     prove = add("prove", command_prove, "Show that each rule and each external check can fail.")
     prove.add_argument("rules", nargs="*", help="only these rule ids")
@@ -709,12 +804,18 @@ def build_parser() -> argparse.ArgumentParser:
     config.add_argument("action", choices=["diff", "lock"])
     config.add_argument("--against", help="the commit to compare with (default: the main line)")
 
-    install = add("hooks", command_hooks, "Install the agent hooks into the host's settings.")
+    install = add("hooks", command_hooks, "Install the agent hooks into the host's settings, or with --git the git hooks.")
     install.add_argument("action", choices=["install"])
-    install.add_argument("--run-with", help="how the hooks start themis (default: `uv run --quiet themis` in a uv project)")
+    install.add_argument("--run-with",
+                         help="how the hooks start themis (default: `uv run --frozen --quiet themis` in a uv project)")
+    install.add_argument("--git", action="store_true",
+                         help="write the git hooks (pre-commit: check --changed; pre-push: check) and set core.hooksPath")
+    install.add_argument("--path", help="with --git: the folder for the git hooks (default: .githooks)")
+    install.add_argument("--force", action="store_true", help="with --git: replace a different hook already there")
 
     hook = add("hook", command_hook, "Answer one hook event from the agent host. Not for people.")
     hook.add_argument("event", choices=["pretool", "start", "stop"])
+    hook.set_defaults(root=None)  # unset: the host's project folder, then the payload's folder, decide
 
     render = add("render", command_render, "Write the generated pages from the records and the rules.")
     render.add_argument("--check", action="store_true", help="write nothing; fail when a page is stale")
@@ -753,6 +854,7 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--question", required=True, help="what the work is meant to find out")
     new.add_argument("--kind")
     new.add_argument("--variants", type=int, default=1, help="how many variants this unit covers")
+    new.add_argument("--under", help="which work pattern the unit goes under, when work names several")
 
     run = add("run", command_run, "Run a unit's work under guard, and write the run's receipt.")
     run.add_argument("work")

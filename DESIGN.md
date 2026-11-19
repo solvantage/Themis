@@ -172,7 +172,9 @@ produced it, and its date. When the method later changes in a way that could fli
 citation of the old decision must be marked provisional.
 
 **History is never rewritten.** A rule can bind from a date, set with `since`. Work older than
-that date is left as it was written.
+that date is left as it was written. Every rule that inspects units of work reads the date the
+same way (`Context.predates`, `Context.bound`): a unit, a seal or a record that reached the main
+line in a commit dated before `since` is not held to the rule; one begun on or after it is.
 
 ## 7. The lifecycle — one shape, named by the pack
 
@@ -210,9 +212,14 @@ never passes.
 Each rule can be `off`, `warn` or `enforce`, and can bind from a date. Every rule starts at
 `warn`: it runs and is shown, and cannot fail the run. A rule that lacks a setting it needs says
 **not configured** and does not run. `themis describe` counts every rule that is off, not
-configured or unproven, so silence is never mistaken for a pass.
+configured or unproven, so silence is never mistaken for a pass. It runs each rule to learn that,
+since a rule may need a table only its run reads, so `describe` and `describe --status` count
+the same.
 
-A pack adds its own gates beside these. Packs never weaken a core rule.
+A pack adds its own gates beside these. Packs never weaken a core rule. The full catalogue, the
+core's rules and every pack's in one place, with each rule's gate, promise, level and proof
+count, is written from the rules themselves by `themis describe --markdown`, so it is never out
+of date.
 
 ### Gate: order — things happen in the declared order
 
@@ -308,7 +315,7 @@ A pack adds its own gates beside these. Packs never weaken a core rule.
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
-| `agents/hooks-installed` | The shipped hooks are present in the host's settings. | The host |
+| `agents/hooks-installed` | The shipped hooks are present in the host's settings, and the git hooks run Themis when the project declares them. | The host, or the git hooks folder |
 | `agents/instructions-generated` | The rules section of the agent instructions equals what the rules produce. | The instructions file |
 
 ### Gate: views — a generated page is never typed
@@ -434,7 +441,7 @@ trap and decision points at its home record.
 | Proof | How it works | What it shows |
 | --- | --- | --- |
 | **Worlds** | Each rule ships small git repositories built from scratch in a temporary folder, with the answer worked out by hand. Honest histories must pass. Broken ones must breach the named rule. | The rule's logic can say no, with no false alarm |
-| **External checks** | The project's own plant is applied in a clone, and the wrapped command must fail with the expected message. | The project's existing check can say no |
+| **External checks** | The project's own plant is applied in a clone (the tracked files and the untracked ones git does not ignore; staged, when the plant says `stage = true`), and the wrapped command must fail with the expected message. | The project's existing check can say no |
 | **Hooks** | Each shipped hook has a table of commands that must be stopped and commands that must pass, plus planted bugs in the hook's own pattern. | The agent's guards work |
 | **Configuration** | In a world, a rule is switched off with no grant, and `config/no-silent-weakening` must fail. | The guard cannot be turned off quietly |
 
@@ -455,7 +462,9 @@ fails a project whose pack falls short.
 
 | Piece | What it does |
 | --- | --- |
-| `themis hooks install` | Writes three hooks into the host's settings, `.claude/settings.json`: before a tool call, session start, and end of turn. |
+| `themis hooks install` | Writes three hooks into the host's settings, `.claude/settings.json`: before a tool call, session start, and end of turn. In a uv project they run `uv run --frozen --quiet themis`, held to the lock file. |
+| Which project | A hook judges the project named by `--root`, else the host's project folder (`$CLAUDE_PROJECT_DIR`), else the nearest folder holding a `themis.toml` at or above the shell's folder. The shell's folder only places a command's relative paths, so a shell outside the project cannot slip a protected edit past it. |
+| `themis hooks install --git [--path .githooks]` | Writes two git hooks, pre-commit (`themis check --changed`) and pre-push (`themis check`), and sets `core.hooksPath` to their folder. It keeps a different hook already there unless given `--force`. Declared as `git_hooks` under `[agents]`, they are checked by `agents/hooks-installed`. |
 | Before a tool call | Stops deletes, remote commands, a forced push, `themis grant`, the owner's own `themis decide` and `themis attest`, and any write to a protected file, for the owner's click. |
 | Session start | Remembers which breaches already exist, so old ones do not block new work. |
 | End of turn | Runs `themis check` against the main line. A new breach keeps the turn open. The host gives it 300 seconds. |
@@ -540,11 +549,13 @@ What counts as weakening:
 | --- | --- |
 | A rule's level lowered: `enforce` to `warn`, or to `off` | Yes |
 | A parameter moved in its looser direction: a longer window, a higher budget, a lower minimum | Yes |
-| A rule's start date moved later; a closed list grown | Yes |
+| A rule's start date moved later, or set for the first time; a closed list grown | Yes |
 | An external check removed; its command, its trigger paths or its verdict mapping changed; its plant removed | Yes |
 | A role's paths widened; a denied tool allowed; a governed document dropped | Yes |
 | A pack removed; the declared standard lowered or removed | Yes |
+| A table, a key or a list entry removed; a value changed whose direction nothing states; a test skip added; a home moved | Yes |
 | The opposite of any of these; a new external check added | No |
+| An addition: a new table (a pack's, `[views]`, `[suite]`, `[agents]`) or key in one, a new list entry, a rule's required parameter first set, another `work` pattern | No |
 | A change Themis cannot classify | Treated as weakening |
 
 `themis config diff` shows a branch's changes sorted into these two groups before the owner is
@@ -566,12 +577,12 @@ The full contract, with the pack interface and the pack test kit, is in
 | Command | Purpose |
 | --- | --- |
 | `themis init` | Write a starter `themis.toml` and the local `.themis/` folder |
-| `themis describe` | Print every gate, rule and proof; count what is off, not configured or unproven |
+| `themis describe [--status] [--markdown]` | Print every gate, rule and proof; count what is off, not configured or unproven. `--status` adds what each rule finds now; `--markdown` prints the full catalogue of core and pack rules |
 | `themis check [RULE ...] [--changed] [--reporter ...]` | Run the rules on the repository |
 | `themis prove [RULE ...]` | Run the proofs, and hold each turned-on pack to the pack contract |
 | `themis explain RULE` | A rule's promise, the incident behind it, its parameters and its proofs |
 | `themis doctor` | Say what is wrong with the project's setup |
-| `themis new NAME --question ...` | Log a unit of work before it runs: a ledger record, and the folder it will live in |
+| `themis new NAME --question ... [--under PATTERN]` | Log a unit of work before it runs: a ledger record, and the folder it will live in. `work` is one pattern or a list; with several places that can hold a unit, `--under` names one |
 | `themis run UNIT -- COMMAND` | Run a unit's work on a clean tree, after its seal; write the run receipt and, with `--input`, the provenance |
 | `themis decide UNIT --gate GATE` | Ask a gate for the decision and store it; `--by owner` records the owner's own call |
 | `themis report UNIT` | Build a unit's report with its pack's builder |
@@ -581,7 +592,7 @@ The full contract, with the pack interface and the pack test kit, is in
 | `themis render [--check]` | Write the generated pages, or fail when one is stale |
 | `themis calibrate` | Measure each gate on noise and on a planted effect; write the receipts |
 | `themis config diff`, `themis config lock` | Show what a change tightens and weakens; refresh the lock |
-| `themis hooks install` | Install the agent hooks |
+| `themis hooks install [--git] [--path DIR] [--force]` | Install the agent hooks; with `--git`, the git hooks (pre-commit, pre-push) and `core.hooksPath` |
 
 **pytest plugin.** It ships in the same distribution. In a project with a `themis.toml`, every
 pytest run ends by writing the suite receipt: what ran, on which exact tree, how it ended, and
