@@ -536,17 +536,17 @@ to the host.
 | Key | Default | What it does |
 | --- | --- | --- |
 | `pretool` | `"ask"` | `"ask"`: ask for a danger, say nothing about the rest. `"allow-safe"`: also allow what is known safe |
-| `temp` | `/tmp/**`, `/private/tmp/**`, `/var/folders/**`, `$TMPDIR/**` | In `allow-safe`, a delete or a write whose every literal target lies in one of these, past every link, and neither inside nor above the project, is safe: agents clean up their scratch clones |
+| `temp` | `/tmp/*/**`, `/private/tmp/*/**`, `$TMPDIR/**` | In `allow-safe`, a delete or a write whose every literal target lies in one of these, past every link, and neither inside nor above the project, is safe: agents clean up their scratch clones. A folder of `/tmp` itself is not: other sessions may own it |
 | `keep` | none | Path patterns whose files are never deleted, moved or overwritten (any redirection, `mv`, `cp` onto, `rm`, `sed -i`, `tee`, `dd`, an edit) without the owner: data that exists only here |
 | `ask`, `deny` | none | Command patterns, `*` for any text, matched against each simple command the hook reads, also inside `sh -c`, `eval` and `$()`: `"scripts/deploy.sh prod*"` asks, a deny match is answered `deny` |
 | `allow` | none | In `allow-safe`, command patterns matched against a whole simple command with no variable or substitution in it, such as `"uv run --frozen pytest*"`: the only way a runner, a shell or an interpreter is ever allowed |
 
 | On the safe list | When |
 | --- | --- |
-| Tools that only read | `ls`, `cat`, `head`, `tail`, `wc`, `cut`, `diff`, `cmp`, `grep`, `tr`, `nl`, `comm`, `basename`, `dirname`, `realpath`, `readlink`, `stat`, `du`, `which`, the checksum tools, `pwd`, `echo`, `printf`, `true`, `false`, `test`; `sort` without `-o`, `uniq` with one file, `rg` without `--pre` or `-z`, `tree` without `-o`, `file` without `-C`, `date` without `-s`; `sed` that only prints (no `-i`, no script file, a print or a substitution without the `w` or `e` flag); `find` without `-delete`, `-exec`, `-ok` or `-fprint` |
-| Writes | `mkdir`, `touch` and every output redirection whose literal target lies in a temp folder, or in the project away from the protected and kept paths and the folders that hold them; `/dev/null` and descriptor copies always |
+| Tools that only read | `ls`, `cat`, `head`, `tail`, `wc`, `cut`, `diff`, `cmp`, `grep`, `tr`, `nl`, `comm`, `basename`, `dirname`, `realpath`, `readlink`, `stat`, `du`, `which`, the checksum tools, `pwd`, `echo`, `true`, `false`, `test`; `printf` with a plain format first (so never `-v`, which sets a variable); `sort` without `-o`, `uniq` with one file, `rg` without `--pre` or `-z`, `file` without `-C`, `date` without `-s`; `sed` that only prints (no `-i`, no script file, a print or a substitution without the `w` or `e` flag); `find` without `-delete`, `-exec`, `-ok` or `-fprint` |
+| Writes | `mkdir`, `touch` and every output redirection whose literal target lies in a temp folder, or in the project away from the protected and kept paths and the folders that hold them, and not under a folder made earlier in the same line; `/dev/null` and descriptor copies always |
 | Deletes | `rm` and `rmdir` whose every literal target lies in a temp folder |
-| git, inside the project | Not in a repository nested in it. `status`, `log`, `show`, `diff`, `rev-parse`, `rev-list`, `ls-files`, `ls-tree`, `blame`, `describe`, `shortlog`, `merge-base`, `cat-file`, `show-ref`, `grep`, `stash list` and `show`, `remote -v`; `branch` without delete, move, copy or force; `add`, not interactive; `commit` with its message, without `--amend`, `--no-verify` or an editor; `fetch` without prune or force; `switch` and `checkout` of a branch, never a path, without force; `merge --ff-only`; `worktree add` and `list`; `push` of named branches other than `main`, `master` and the project's main, to a remote named by its short name, without force, delete, mirror, prune, `+ref` or `:ref`. Options are matched exactly, never by an abbreviation git would accept; no `-c`, `--git-dir`, `--work-tree` or `GIT_*` variable |
+| git, inside the project | Not in a repository nested in it, and not after a folder was made earlier in the line. `status`, `log`, `show`, `diff`, `rev-parse`, `rev-list`, `ls-files`, `ls-tree`, `blame`, `describe`, `shortlog`, `merge-base`, `cat-file`, `show-ref`, `grep`, `stash list` and `show`, `remote -v`; `branch` without delete, move, copy or force; `add`, not interactive; `commit` with its message, without `--amend`, `--no-verify` or an editor; `fetch` from a remote the repository names, with plain branch names, never a URL or `host:path`; `switch NAME` and `checkout NAME` of an existing local branch, or `switch -c NEW` and `checkout -b NEW` from a plain start point, and nothing else (no path, pathspec, glob or force); `merge --ff-only`; `worktree add` and `list`; and only `push [-u] REMOTE BRANCH`, of an existing local branch named plainly that is not `main`, `master` or the project's main under any name, to a remote the repository names with no push mapping or mirror configured. Options are matched exactly, never by an abbreviation git would accept; no `-c`, `--git-dir`, `--work-tree` or `GIT_*` variable |
 | `cd` | Always; where it moves the shell is followed only when proven (below) |
 
 Never on the list: an interpreter, a shell, a runner or a wrapper (`python`, `node`, `perl`,
@@ -557,24 +557,32 @@ anything the reader does not follow: arithmetic, `[[`, `case`, a function, an al
 
 | How it reads | |
 | --- | --- |
-| The reader | Follows quotes, `$()` and backticks (each read in turn), here-documents, comments and every redirection form (`>`, `>>`, `>\|`, `>!`, `&>`, `&>>`, `>&FILE`, `<>`). It marks each word a variable, a glob, a brace list or a tilde will change, and refuses what it does not follow |
-| `cd` | Followed only for a bare `cd DIR` (with `-L` or `-P`): a literal folder that exists and can be entered, joined by `&&` to the commands after it, not after `\|\|`, not in a pipe, no CDPATH, and nothing before it in the line that changes files. Otherwise the folder is unknown: relative writes and deletes are never allowed, and the danger check reads them from the root and by file name |
+| The reader | Follows quotes, `$()` and backticks (each read in turn), here-documents, comments and every redirection form, zsh's included (`>`, `>>`, `>\|`, `>!`, `&>`, `&>>`, `&>!`, `>&!`, `>>&`, `>&FILE`, `<>`, …). It marks each word a variable, a glob, a brace list or a tilde will change, and refuses what it does not follow: a control or invisible character (a carriage return is part of a word to the shell), a redirection to a word starting with `!` or `\|`, any `${…}` but the plain `${NAME}`, zsh's `$~X` and its kin, arithmetic, `[[`, `case`, functions |
+| `cd` | Followed only for a bare `cd DIR` (with `-L` or `-P`): a literal folder that exists and can be entered, joined by `&&` to the commands after it, not after `\|\|`, not in a pipe, no CDPATH, and nothing before it in the line that changes files. A `..` is followed only with `-P`, since without it the shell reads `..` against the path as written, not past its links. Otherwise the folder is unknown: relative writes and deletes are never allowed, and the danger check reads them from the root and by file name |
 | Paths | Made absolute past every link, compared without regard to case. A protected or kept pattern also covers each folder that holds it, so `mv .claude x` asks |
 | Text it cannot read | A command the reader refuses, or a shell reading a pipe, is searched as raw text for the danger words; found, it asks. In `ask` mode, a command the 0.2.0 reader could not read still asks, as it did |
 | The host's lists | Read in `allow-safe` from `.claude/settings.json`, `.claude/settings.local.json`, the user's settings (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) and the managed settings, with the host's meaning: `Bash(x)` is exact, `Bash(x:*)` and `Bash(x *)` are `x` alone or followed by more, `*` is any text. Each simple command is matched with its redirections left out. A file it cannot read, or an ask or deny list that is not a list of text, gives no allow, and `themis doctor` says so. A host rule for edits leaves every edit to the host |
-| Guarded in `allow-safe` | Besides the protected paths: `.claude/**`, `.githooks/**`, `.git` and `.git/**`, and the user's own host settings files |
+| Guarded in `allow-safe` | Besides the protected paths: `.claude/**` and `.mcp.json` (the host's settings and the servers it starts), `.githooks/**`, `.husky/**`, `.pre-commit-config.yaml` and lefthook's files, the folder `core.hooksPath` names (with its parent, for a manager's `_` folder), `.themis/**` (the hook's own state), every `.git` file or folder at any depth, and in the user's home the host's folder and `~/.claude.json` |
 
-Its limits, stated: aliases and functions from the user's own shell are not seen. An `allow` entry
-for a test runner lets the agent run whatever code it writes into the tests. A deny or ask pattern
-is matched only against the commands the hook reads; one it cannot read is never allowed, and the
-host's own lists then apply. The mode takes effect as soon as `themis.toml` is saved; switching to
-`allow-safe`, adding a `temp` folder or an `allow` entry is a weakening (section 14), which
-`config/no-silent-weakening` holds to the owner's grant.
+**What it cannot protect.** `allow-safe` is a best-effort allow list, not a sandbox. It reads a
+command as text, ahead of the shell, and two readings of one line can differ; two reviews found
+lines where they did, each now refused and kept as a test, and more may exist. It does not confine
+what an allowed command then does: the commands on the list are chosen because what they do is
+small and known. So the answer it cannot give is the safe one: whatever it does not fully
+understand gets no answer, and the host's own permission mode, or its automatic check, still sees
+and decides it. Known gaps: aliases and functions from the user's own shell are not seen, so a
+safe name may run something else. An `allow` entry for a test runner lets the agent run whatever
+code it writes into the tests. A deny or ask pattern is matched only against the commands the hook
+reads; one it cannot read is never allowed, and the host's own lists then apply. The mode takes
+effect as soon as `themis.toml` is saved; switching to `allow-safe`, adding a `temp` folder or an
+`allow` entry is a weakening (section 14), which `config/no-silent-weakening` holds to the owner's
+grant.
 
 Dangers, judged in both modes: deletes (`rm`, `rmdir`, `unlink`, `shred`, `git rm`, `git clean`,
 `git worktree remove`, `find -delete`, `rsync --delete`, also behind `sudo`, `timeout`, `xargs` or
-`uv run`); work thrown away (`git reset --hard`, `git stash drop` or `clear`, a checkout of paths or
-by force, a `git restore` of the working tree, a branch deleted or overwritten); `--no-verify`, and
+`uv run`); work thrown away (`git reset --hard`, `git stash drop` or `clear`, a checkout of paths,
+of a glob or a `:` pathspec, or by force, a `git restore` of the working tree, a branch deleted or
+overwritten); `--no-verify`, and
 a `git -c` that runs a program or moves the hooks; remote shells and copies (`ssh`, `scp`, `sftp`,
 `rsync` to a host, `rclone`, …); uploads (`curl` or `wget` sending data, or a method other than
 GET, to a host that is not local) and deletes through a cloud tool; owner-only Themis commands,

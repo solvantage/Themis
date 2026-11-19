@@ -122,8 +122,10 @@ To stop being asked about everyday work, add `pretool = "allow-safe"` under `[ag
 `themis config lock` again, and commit; `themis config diff` lists the switch as a weakening, which
 needs your grant. The hook then gives three answers. It allows a call only when it reads every
 command in it and each is on its safe list: tools that only read, `git status`, `log`, `diff`,
-`add`, `commit -m`, a push to a branch other than main, writes inside the project away from
-protected files, and deletes in `/tmp` or `$TMPDIR` (`temp = [...]` names other folders). It asks,
+`add`, `commit -m`, `push -u origin BRANCH` for a branch other than main, writes inside the project
+away from protected files, and deletes inside a folder of `/tmp` or in `$TMPDIR` (`temp = [...]`
+names other folders). It is a best-effort list, not a sandbox: what it does not fully understand
+it leaves to your host. It asks,
 as before, for a delete elsewhere, work thrown away, a remote command or an upload, `themis grant`
 and your own decisions and attestations, and a write to a protected file or to one under
 `keep = [...]`; your `deny` patterns and the host's deny list are answered deny. Everything else,
