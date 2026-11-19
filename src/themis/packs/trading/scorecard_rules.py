@@ -7,6 +7,8 @@ render as they were written.
 A study is "published" here once it has anything under `results/`. `scorecard/believable` and
 `scorecard/explainer` take the kinds of study they bind (`kinds`, every kind when unset) and honour
 `since`: a study whose seal reached the main line before that date is left alone.
+`scorecard/rendering` reads a study's pages with the core's Markdown reader, the one
+`docs/no-bare-dollar-pairs` uses, so a sign in code, HTML or a link target is never counted.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from themis import work
+from themis import markdown, work
 from themis.packs.trading import scorecard, units
 from themis.rule import Context, Param, proof, rule
 
@@ -42,8 +44,6 @@ _BOX = re.compile(r"""class\s*=\s*(["'])(?:[^"']*\s)?how-to-read(?:\s[^"']*)?\1"
 _CONTROL = re.compile(r"<(?:input|button|select)\b", re.IGNORECASE)
 _NO_EXPLAINER = re.compile(r"^[ \t]*explainer:[ \t]*none\b(.*)$", re.IGNORECASE | re.MULTILINE)
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9'-]*")
-_CODE_SPAN = re.compile(r"(`+).*?\1")
-_BARE_DOLLAR = re.compile(r"(?<!\\)\$")
 
 
 KINDS = Param("kinds", [str], list(units.KINDS), "larger",
@@ -507,20 +507,6 @@ def _(world: World) -> None:
 # -- scorecard/rendering ------------------------------------------------------------------------
 
 
-def _dollar_lines(text: str) -> list[tuple[int, int]]:
-    """Each line that holds two or more bare dollar signs, as (line number, how many). A sign
-    after a backslash, in a code span or in a fenced block is not bare."""
-    found, fenced = [], False
-    for number, line in enumerate(text.splitlines(), start=1):
-        if line.lstrip().startswith(_FENCE):
-            fenced = not fenced
-            continue
-        count = 0 if fenced else len(_BARE_DOLLAR.findall(_CODE_SPAN.sub("", line)))
-        if count >= 2:
-            found.append((number, count))
-    return found
-
-
 @rule(
     "scorecard/rendering",
     "No page puts two bare dollar signs in one line, and no chart file is oversized.",
@@ -539,9 +525,9 @@ def rendering(ctx: Context) -> None:
             if text is None:
                 ctx.refuse("this markdown file cannot be read as text", where=path)
                 continue
-            for number, count in _dollar_lines(text):
-                ctx.breach(f"this line holds {count} bare dollar signs, so the words between them are read as "
-                           "mathematics and vanish", where=path, line=number,
+            for number, line in markdown.dollar_lines(text):  # the core reader: prose only, as CommonMark reads it
+                ctx.breach(f"this line holds {len(markdown.bare_dollars(line))} bare dollar signs, so the words "
+                           "between them are read as mathematics and vanish", where=path, line=number,
                            fix="write each sign as \\$, put the amounts in code spans, or keep one sign to a line")
         for path in work.inside(unit, files, ["results/**/*.html", "results/**/*.svg", "results/**/*.png"]):
             ctx.inspect()
@@ -589,6 +575,19 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     _study(world)
     world.write(f"{STUDY}/notes/costs.md", "The fee is \\$1, the spread $2 and the swap $3.\n")
+
+
+@proof("scorecard/rendering", "pairs in an HTML block and in a diagram are not prose", expect="pass")
+def _(world: World) -> None:
+    _study(world)
+    world.write(f"{STUDY}/README.md", '<div>\n$1 and $2\n</div>\n\n~~~mermaid\nA["$1"] --> B["$2"]\n~~~\n')
+
+
+@proof("scorecard/rendering", "a shorter fence inside a long one does not close it", expect="fail",
+       contains="holds 2 bare dollar signs")
+def _(world: World) -> None:
+    _study(world)
+    world.write(f"{STUDY}/README.md", "````md\n```\n````\nIt made $12 on a $100 stake.\n")
 
 
 @proof("scorecard/rendering", "a picture over the project's cap", expect="fail", contains="over the cap of 200")
