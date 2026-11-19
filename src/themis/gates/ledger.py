@@ -4,7 +4,8 @@ The ledger holds one record for each unit of work, made before the work runs. A 
 is honest only when it also holds the attempts that led nowhere, so these rules read the ledger
 against the results on disk, and against the decisions that used its count.
 
-A ledger record names its unit in `work`, by the unit's path or by its folder name alone. Beside
+A ledger record names its unit in `work`, by the unit's path or by its folder name alone, when no
+other unit has that folder name. Beside
 `work`, the rules here read these fields of a ledger record:
 
     state     "promised" (logged, no result yet), "done" (it has results) or "dropped" (stopped)
@@ -37,11 +38,6 @@ def _units(ctx: Context) -> dict[str, list[str]]:
     except ValueError as error:
         ctx.refuse(str(error), where="themis.toml", fix="name the unit folders at one depth, such as work/*")
         return {}
-
-
-def _folder(unit: str) -> str:
-    """A unit's folder name alone, which a ledger record may use in place of the unit's path."""
-    return unit.rsplit("/", 1)[-1]
 
 
 def _text(value: Any) -> bool:
@@ -80,18 +76,19 @@ def _day(value: Any) -> dt.date | None:
 def complete(ctx: Context) -> None:
     held = {unit: work.inside(unit, files, ctx.param("results")) for unit, files in sorted(_units(ctx).items())}
     rows = ctx.records("ledger")
-    named = {str(row.get("work")).strip("/") for row in rows}
+    named = {work.named(held, str(row.get("work"))) for row in rows}
     for unit, results in held.items():
         if not results:
             continue  # a folder with no result yet has nothing to count
         ctx.inspect()
-        if unit not in named and _folder(unit) not in named:
+        if unit not in named:
             ctx.breach("this unit holds results and no ledger record names it", where=unit,
-                       fix="add a ledger record whose work is this unit; an attempt that failed is counted too")
+                       fix="add a ledger record whose work is this unit; an attempt that failed is counted too; "
+                           "a folder name that several units share names none of them")
     for row in rows:
         ctx.inspect()
-        name, state = str(row.get("work")).strip("/"), row.get("state")
-        results = held.get(name) or next((found for unit, found in held.items() if _folder(unit) == name), [])
+        state = row.get("state")
+        results = held.get(work.named(held, str(row.get("work"))) or "", [])
         if state not in STATES:
             said = "has no state" if state is None else f"has the state {state!r}"
             ctx.breach(f"this ledger record {said}; a state is promised, done or dropped", where=row.path,
@@ -158,6 +155,23 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     world.manifest(COMPLETE_SETUP)
     world.write("work/a/results/out.csv", "1\n")
+
+
+@proof("ledger/complete", "units that share a folder name, each named by its path", expect="pass")
+def _(world: World) -> None:
+    world.manifest(COMPLETE_SETUP.replace('"work/*"', '"work/*/*"'))
+    for name in ("a", "b"):
+        world.write(f"ledger/{name}.toml", f'work = "work/{name}/tune"\nstate = "done"\n')
+        world.write(f"work/{name}/tune/results/out.csv", "1\n")
+
+
+@proof("ledger/complete", "a folder name two units share names neither of them", expect="fail",
+       contains="no ledger record names it")
+def _(world: World) -> None:
+    world.manifest(COMPLETE_SETUP.replace('"work/*"', '"work/*/*"'))
+    world.write("ledger/tune.toml", 'work = "tune"\nstate = "done"\n')
+    world.write("work/a/tune/results/out.csv", "1\n")
+    world.write("work/b/tune/results/out.csv", "1\n")
 
 
 @proof("ledger/complete", "a record for another unit does not cover this one", expect="fail",

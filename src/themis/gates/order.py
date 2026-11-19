@@ -185,15 +185,16 @@ def logged_first(ctx: Context) -> None:
         ctx.refuse("there is no main line, so no order can be read", fix="commit to main, or set project.main")
         return
     arrivals = ctx.git.arrivals(main)
-    logged: dict[str, list[str]] = {}
+    units = _units(ctx)
+    logged: dict[str | None, list[str]] = {}
     for record in ctx.records("ledger"):
-        logged.setdefault(str(record.get("work")).strip("/"), []).append(record.path)
-    for unit, files in sorted(_units(ctx).items()):
+        logged.setdefault(work.named(units, str(record.get("work"))), []).append(record.path)
+    for unit, files in sorted(units.items()):
         results = work.inside(unit, files, ctx.param("results"))
         if not results:
             continue
         ctx.inspect()
-        rows = logged.get(unit) or logged.get(unit.rsplit("/", 1)[-1])
+        rows = logged.get(unit)
         if not rows:
             ctx.breach("this unit holds results and has no ledger record", where=unit,
                        fix="a unit is logged before it runs; add its ledger record and say why it is late")
@@ -224,6 +225,21 @@ def _(world):
 def _(world):
     _start(world, LEDGER_SETUP)
     world.pull_request("results", RESULT)
+
+
+@proof("order/logged-first", "units that share a folder name, each logged by its path", expect="pass")
+def _(world):
+    _start(world, LEDGER_SETUP.replace('"work/*"', '"work/*/*"'))
+    world.pull_request("log", {"ledger/a.toml": 'work = "work/a/tune"\n', "ledger/b.toml": 'work = "work/b/tune"\n'})
+    world.pull_request("results", {"work/a/tune/results/out.csv": "1\n", "work/b/tune/results/out.csv": "1\n"})
+
+
+@proof("order/logged-first", "a folder name two units share logs neither of them", expect="fail",
+       contains="has no ledger record")
+def _(world):
+    _start(world, LEDGER_SETUP.replace('"work/*"', '"work/*/*"'))
+    world.pull_request("log", {"ledger/tune.toml": 'work = "tune"\n'})
+    world.pull_request("results", {"work/a/tune/results/out.csv": "1\n", "work/b/tune/results/out.csv": "1\n"})
 
 
 @proof("order/logged-first", "logged in the same merge as the result", expect="fail", contains="with the first result")

@@ -446,7 +446,7 @@ def command_run(args: argparse.Namespace) -> int:
 
         read = sorted({name for pattern in rule_files for name in paths.select(git.all_files(), pattern)})
         receipt["rules_hash"] = rules_hash(root, read)
-    name = f"{unit.rsplit('/', 1)[-1]}-{at.replace(':', '').replace('-', '')[:15]}"
+    name = f"{work.file_name(unit)}-{at.replace(':', '').replace('-', '')[:15]}"
     receipts.write(root, "run", name, receipt, committed=True)
     if args.input and done.returncode == 0:
         inputs = {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in args.input}
@@ -458,11 +458,22 @@ def command_run(args: argparse.Namespace) -> int:
     return EXIT_PASS if done.returncode == 0 else EXIT_FAIL
 
 
+def _stored_work(path: Path) -> str | None:
+    """The work a stored decision names, or None when there is no readable decision there."""
+    import json
+
+    try:
+        found = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return str(found.get("work", "")).strip("/") if isinstance(found, dict) else None
+
+
 def command_decide(args: argparse.Namespace) -> int:
     """Ask a gate function for the decision on a unit's numbers, and store what it says."""
     import json
 
-    from themis import receipts
+    from themis import receipts, work
 
     ready = _ready(args)
     if ready is None:
@@ -504,7 +515,15 @@ def command_decide(args: argparse.Namespace) -> int:
             return EXIT_REFUSE
         record.update(decision=answer["decision"], verdict=answer["verdict"], gate_version=loaded.gate_versions.get(args.gate, "1"))
         record.update({key: answer[key] for key in ("enough_evidence", "reason", "numbers", "level") if key in answer})
-    path = root / "decisions" / f"{unit.replace('/', '-') if builder else unit.rsplit('/', 1)[-1]}.json"
+    # Named by the unit's whole path: two units that share a folder name keep a decision each.
+    path = root / "decisions" / f"{work.file_name(unit)}.json"
+    held = _stored_work(path)
+    if held is not None and held != unit:
+        _say(f"themis: REFUSE. {path.relative_to(root)} holds the decision of {held}, not of {unit}.")
+        return EXIT_REFUSE
+    earlier = root / "decisions" / f"{unit.rsplit('/', 1)[-1]}.json"
+    if earlier != path and _stored_work(earlier) == unit:
+        earlier.replace(path)  # a decision stored under 0.1.0's folder-name file moves to the unit's own name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     verdict = Verdict(str(record["verdict"]))

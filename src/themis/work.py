@@ -32,5 +32,22 @@ def inside(unit: str, files: Iterable[str], patterns: Iterable[str]) -> list[str
     return sorted(name for name in files if paths.matches_any(name[len(unit) + 1:], patterns))
 
 
+def file_name(unit: str) -> str:
+    """A unit's whole path as one file name, so two units that share a folder name never share a
+    record: `setups/a/tune` and `setups/b/tune` are `setups-a-tune` and `setups-b-tune`."""
+    return unit.strip("/").replace("/", "-")
+
+
+def named(units: Iterable[str], name: str) -> str | None:
+    """The unit a record names: by its path, or by its folder name when no other unit has that
+    folder name. None when it names no unit, or a folder name several units share."""
+    name = name.strip("/")
+    units = list(units)
+    if name in units:
+        return name
+    found = [unit for unit in units if unit.rsplit("/", 1)[-1] == name]
+    return found[0] if len(found) == 1 else None
+
+
 def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
