@@ -223,7 +223,7 @@ PLANTS = [
     ("an agent may grant itself", 'if _after_themis(words) == "grant":', "if False:", "uv run themis grant config"),
     ("a redirect into a protected file is let through", 'if word in (">", ">>", ">|")', 'if word in ("no-such",)', "echo 'x = 1' > themis.toml"),
     ("an in-place edit of a protected file is let through", 'any(arg.startswith("-i") for arg in args)', "False", "sed -i '' 's/enforce/warn/' themis.toml"),
-    ("an unreadable command is let through", 'return "Themis cannot read this command, so it cannot say it is safe."', "return None", "echo 'unbalanced"),
+    ("an unreadable command is let through", "return _scan(text, protected, keep) or UNREADABLE", "return None", "echo 'unbalanced"),
 ]
 
 
@@ -231,7 +231,11 @@ def planted(old: str, new: str) -> types.ModuleType:
     assert SOURCE.count(old) == 1, f"the plant's target must occur exactly once: {old!r}"
     module = types.ModuleType("planted_hooks")
     module.__file__ = hooks.__file__
-    exec(compile(SOURCE.replace(old, new), "<planted hooks.py>", "exec"), module.__dict__)  # noqa: S102
+    sys.modules[module.__name__] = module  # a dataclass looks its module up while it is built
+    try:
+        exec(compile(SOURCE.replace(old, new), "<planted hooks.py>", "exec"), module.__dict__)  # noqa: S102
+    finally:
+        del sys.modules[module.__name__]
     return module
 
 

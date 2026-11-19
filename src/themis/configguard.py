@@ -24,12 +24,21 @@ from pathlib import Path
 from typing import Any
 
 from themis import external, pack
-from themis.manifest import COMMON_RULE_KEYS, LEVEL_RANK, Manifest
+from themis.manifest import COMMON_RULE_KEYS, LEVEL_RANK, TEMP_FOLDERS, Manifest
 from themis.rule import RULES
 
 LOCK_FILE = "themis.lock"
 #: Paths no agent role may change, in every project. A project adds its own under [config].
 ALWAYS_PROTECTED = ("themis.toml", LOCK_FILE, "grants/**", "receipts/**", ".claude/settings.json")
+#: Which way the agent hook's keys under [agents] move the checking, as a pack states its own.
+#: A temp folder added lets a delete through; a kept path or an ask or deny pattern added stops
+#: one. `pretool` is read on its own: "allow-unless" is the looser mode.
+AGENT_KEYS = {
+    "temp": pack.Key("smaller", list(TEMP_FOLDERS)),
+    "keep": pack.Key("larger", []),
+    "ask": pack.Key("larger", []),
+    "deny": pack.Key("larger", []),
+}
 
 
 @dataclass(frozen=True)
@@ -296,7 +305,7 @@ def classify(old: dict[str, Any], new: dict[str, Any], root: Path | None = None)
         found.append(Change(protected, "config.protected changed"))
 
     classified = {"rules", "checks", "roles", "project", "config"}
-    keys = {loaded.name: loaded.keys for loaded in old_packs + new_packs}
+    keys = {"agents": AGENT_KEYS, **{loaded.name: loaded.keys for loaded in old_packs + new_packs}}
     for table in sorted((set(old) | set(new)) - classified):
         found += _table_changes(f"[{table}]", old.get(table), new.get(table), keys.get(table, {}))
     return found
@@ -366,6 +375,12 @@ def _table_changes(where: str, old: Any, new: Any, keys: dict[str, pack.Key] | N
         return []
     if where == "[homes]" or where.startswith("[homes."):
         return [Change("weakening", f"{where} changed: records are read from another place")]
+    if where == "[agents.pretool]":
+        if (old or "ask") == (new or "ask"):
+            return []
+        looser = (new or "ask") == "allow-unless"
+        return [Change("weakening" if looser else "tightening",
+                       f"{where} is now {new or 'ask'}: the hook {'allows' if looser else 'no longer allows'} what needs no owner")]
     if where == "[suite.skips]":
         old, new = old or [], new or []  # no list of skips is an empty one
     declared = _declared(keys, path) if path else None

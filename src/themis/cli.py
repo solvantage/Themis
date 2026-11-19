@@ -654,6 +654,7 @@ def command_hooks(args: argparse.Namespace) -> int:
         _say(f"themis: the hooks could not be installed: {error}")
         return EXIT_REFUSE
     print(f"Installed the hooks in {path.relative_to(root)}. They take effect in the next session.")
+    print(f"Mode: {hooks.mode_line(root)}")
     return EXIT_PASS
 
 
@@ -786,6 +787,8 @@ def command_doctor(args: argparse.Namespace) -> int:
                   for what, _ in hooks.git_missing(root, manifest.table("agents")["git_hooks"])]
     for line in found:
         print(f" - {line}")
+    if manifest.present and not manifest.problems and manifest.table("agents").get("host"):
+        print(f"The agent hook: {hooks.mode_line(root)}")
     print("Nothing is wrong with the setup." if not found else f"{len(found)} thing(s) to put right.")
     return EXIT_REFUSE if found else EXIT_PASS
 

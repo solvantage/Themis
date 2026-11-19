@@ -20,6 +20,11 @@ MANIFEST_FILE = "themis.toml"
 LEVELS = ("off", "warn", "enforce")
 LEVEL_RANK = {name: rank for rank, name in enumerate(LEVELS)}
 PARSERS = ("path-line-message", "json-lines")
+#: How the agent hook answers before a tool call: ask for danger and leave the rest to the host, or
+#: answer allow unless something needs the owner.
+PRETOOL_MODES = ("ask", "allow-unless")
+#: Where scratch work lives, when [agents] sets no `temp`. `$TMPDIR` is read when the hook runs.
+TEMP_FOLDERS = ("/tmp/**", "/private/tmp/**", "/var/folders/**", "$TMPDIR/**")
 #: Keys any rule's table may hold, beside the rule's own parameters.
 COMMON_RULE_KEYS = {
     "level": Choice(*LEVELS),
@@ -58,7 +63,8 @@ CORE = {
     "config": {"protected": [str]},
     "checks": {"external": [EXTERNAL]},
     "adapters": {"*": {"*": ANY}},
-    "agents": {"host": Choice("claude"), "instructions": str, "git_hooks": str},
+    "agents": {"host": Choice("claude"), "instructions": str, "git_hooks": str, "pretool": Choice(*PRETOOL_MODES),
+               "temp": [str], "keep": [str], "ask": [str], "deny": [str]},
 }
 
 

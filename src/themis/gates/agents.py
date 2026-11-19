@@ -30,7 +30,10 @@ def hooks_installed(ctx: Context) -> None:
         if absent is None:
             ctx.refuse("the host's settings file cannot be read", where=hooks.SETTINGS, fix="correct the JSON")
         for event in absent or []:
-            ctx.breach(f"the {event} hook is not installed", where=hooks.SETTINGS, fix="run `themis hooks install`")
+            said = f"the {event} hook is not installed"
+            if event == "PreToolUse":
+                said += f', so nothing answers before a tool call (pretool = "{table.get("pretool", "ask")}")'
+            ctx.breach(said, where=hooks.SETTINGS, fix="run `themis hooks install`")
     if table.get("git_hooks"):
         ctx.inspect()
         for what, where in hooks.git_missing(ctx.root, table["git_hooks"]):
@@ -53,6 +56,14 @@ def _(world):
     world.manifest(AGENTS)
     path = hooks.install(world.root, "themis")
     path.write_text(path.read_text().replace("themis hook stop", "true"), encoding="utf-8")
+
+
+@proof("agents/hooks-installed", "allow-unless with its before-a-tool-call hook taken out", expect="fail",
+       contains='nothing answers before a tool call (pretool = "allow-unless")')
+def _(world):
+    world.manifest(AGENTS + '    pretool = "allow-unless"\n')
+    path = hooks.install(world.root, "themis")
+    path.write_text(path.read_text().replace("themis hook pretool", "true"), encoding="utf-8")
 
 
 @proof("agents/hooks-installed", "settings that are not JSON", expect="refuse", contains="cannot be read")
