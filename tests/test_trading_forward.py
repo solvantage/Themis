@@ -137,6 +137,60 @@ def test_a_kinder_line_typed_into_the_stored_inputs_fails_the_rebuild_and_not_th
     assert verdict(world, "forward/match") is Verdict.FAIL
 
 
+# -- a project with no forward run, and the rules that bind every kind --------------------------
+
+FORWARD_RULES = sorted(rule_id for rule_id in RULES if rule_id.startswith("forward/"))
+STANDARD = """
+[project]
+name = "research"
+packs = ["trading"]
+standard = "themis-trading/1"
+
+[trading]
+work = "work/*"
+
+[rules]
+"prereg/declared" = "enforce"
+""" + "".join(f'"{rule_id}" = "enforce"\n' for rule_id in FORWARD_RULES)
+
+
+def test_a_standard_project_with_no_forward_run_finds_each_forward_rule_not_configured(tmp_path: Path) -> None:
+    """The standard holds the eight forward rules at enforce. A project that runs no forward run sets
+    them so and is not refused for it: each says what it would need, and decides nothing."""
+    from themis import standards
+
+    world = World(tmp_path / "repo")
+    world.root.mkdir()
+    world.manifest(STANDARD)
+    world.write("work/a/PRE-REG.md", "---\nkind: tune\nwindows: [w]\nwindow-w: {from = \"2025-01-01\", to = "
+                                     "\"2025-12-31\"}\ngate: tune\niterations: 9\nrisk_rules: r.json\n---\n")
+    world.commit("a tune study, and no forward run")
+    manifest = manifests.load(world.root)
+    report = engine.run(manifest)
+    found = {result.id: result for result in report.results}
+    assert len(FORWARD_RULES) == 8
+    for rule_id in FORWARD_RULES:
+        assert found[rule_id].status == "not configured", rule_id
+        assert "seal a study as kind forward" in found[rule_id].note and not found[rule_id].counts
+    assert found["prereg/declared"].verdict is Verdict.PASS and report.verdict is Verdict.PASS
+    standard = standards.declared(manifest)
+    assert standard is not None and set(FORWARD_RULES) <= set(standard.levels)
+    assert standard.floors["forward/enough-trades"] == {"min_trades": 30}
+    assert not [found for found in standards.deviations(manifest, standard) if found.rule.startswith("forward/")]
+    (world.root / "themis.toml").write_text(STANDARD.replace('"forward/match" = "enforce"', ""), encoding="utf-8")
+    below = standards.deviations(manifests.load(world.root), standard)
+    assert [(found.rule, found.what) for found in below if found.rule.startswith("forward/")] == [
+        ("forward/match", "level is warn; the standard requires enforce")]
+
+
+@pytest.mark.parametrize("rule_id", ["scorecard/believable", "scorecard/explainer"])
+def test_the_scorecard_rules_bind_a_forward_run_unless_kinds_says_otherwise(tmp_path: Path, rule_id: str) -> None:
+    world = a_run(tmp_path)
+    assert verdict(world, rule_id) is Verdict.FAIL  # a forward run with records answers like any study
+    world.manifest(forward.MANIFEST + forward._rule(rule_id, 'kinds = ["strategy", "signal"]'))
+    assert verdict(world, rule_id) is Verdict.REFUSE  # not bound: nothing is left to inspect
+
+
 def test_the_seal_and_the_weekly_record_read_as_their_schemas_say() -> None:
     from themis import records
 
