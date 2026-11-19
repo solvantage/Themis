@@ -203,7 +203,7 @@ rules afterwards.
 
 ## 8. The core rule catalogue
 
-Forty-five rules in fifteen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
+Forty-six rules in sixteen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
 answer whenever the evidence is missing, unreadable or empty.** A gate that inspected nothing
 never passes.
 
@@ -316,6 +316,17 @@ A pack adds its own gates beside these. Packs never weaken a core rule.
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
 | `views/current` | Each generated page equals what its records produce. | Which pages hold a generated block |
+
+### Gate: docs — a page renders as it was written
+
+| Rule | The promise | Supplied by the pack or project |
+| --- | --- | --- |
+| `docs/no-bare-dollar-pairs` | No line of Markdown prose holds two or more bare dollar signs, which a renderer pairs into math. | Which pages it reads |
+
+Prose is told from code and HTML as CommonMark says: a fence closes only on its own character, at
+least as long; indented code starts where no paragraph or list goes on; an HTML block starts under
+one of the seven start conditions. Code spans, link targets, inline tags and `\$` are not bare.
+The reader is `themis.markdown`, which a pack rule can build on.
 
 ### Gate: external — the project's own checks, held to the same laws
 
