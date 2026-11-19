@@ -117,7 +117,12 @@ An external check is held to the same laws as a native rule.
   output its declared parser cannot read.
 - **It is proven.** A plant edits a file in a copy of the repository, and the check must then
   fail, with the expected text in its output. That last part is what keeps the proof strict: the check must fail
-  for the planted reason, not for any reason.
+  for the planted reason, not for any reason. A plant does one thing to one file: `append`,
+  `content`, `delete`, or `find` with `replace`. With `stage = true` it also stages that file in
+  the copy, so a check that reads only what is staged (a pre-commit guard) is proven on it.
+- **Its copy holds what git carries.** The copy has the tracked files and the untracked ones that
+  are not ignored, as the working tree holds them, and a git folder of its own. Ignored data, such
+  as a results cache, stays behind, so a large one never slows a proof.
 - **It is protected.** The files named in `command` join the protected paths, so no agent role
   can edit the script that judges its own work.
 - **It is locked.** The command and the hash of its script are part of the configuration hash.

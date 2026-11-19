@@ -436,7 +436,7 @@ trap and decision points at its home record.
 | Proof | How it works | What it shows |
 | --- | --- | --- |
 | **Worlds** | Each rule ships small git repositories built from scratch in a temporary folder, with the answer worked out by hand. Honest histories must pass. Broken ones must breach the named rule. | The rule's logic can say no, with no false alarm |
-| **External checks** | The project's own plant is applied in a clone, and the wrapped command must fail with the expected message. | The project's existing check can say no |
+| **External checks** | The project's own plant is applied in a clone (the tracked files and the untracked ones git does not ignore; staged, when the plant says `stage = true`), and the wrapped command must fail with the expected message. | The project's existing check can say no |
 | **Hooks** | Each shipped hook has a table of commands that must be stopped and commands that must pass, plus planted bugs in the hook's own pattern. | The agent's guards work |
 | **Configuration** | In a world, a rule is switched off with no grant, and `config/no-silent-weakening` must fail. | The guard cannot be turned off quietly |
 

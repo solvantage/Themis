@@ -28,7 +28,8 @@ COMMON_RULE_KEYS = {
     "shadow": str,
 }
 
-PLANT = {"file": Required(str), "append": str, "find": str, "replace": str, "content": str, "delete": bool}
+PLANT = {"file": Required(str), "append": str, "find": str, "replace": str, "content": str, "delete": bool,
+         "stage": bool}
 EXTERNAL = {
     "id": Required(str),
     "description": Required(str),
