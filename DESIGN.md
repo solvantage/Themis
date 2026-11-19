@@ -203,7 +203,7 @@ rules afterwards.
 
 ## 8. The core rule catalogue
 
-Forty-seven rules in sixteen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
+Fifty rules in seventeen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
 answer whenever the evidence is missing, unreadable or empty.** A gate that inspected nothing
 never passes.
 
@@ -324,6 +324,20 @@ not in the repository. The generator writes a stamp on a line of its own, such a
 The hash is the SHA-256, in lower-case hex, of the page's UTF-8 text with each CRLF or lone CR
 turned into LF and the stamp's own line taken out. A stamp inside fenced code is a quotation, not
 a stamp.
+
+### Gate: layout — the repository is shaped the way the project says
+
+| Rule | The promise | Supplied by the pack or project |
+| --- | --- | --- |
+| `layout/required-files` | Each folder of a declared kind holds the files its kind requires. | Each kind's folder pattern and the files it needs |
+| `layout/retired-names` | No file holds a retired name, in its text or its path, but on a line allowed exactly. | The retired names, and each allowed line |
+| `layout/no-ignored-citations` | No page links or cites a path git ignores, unless a tracked index the project names lists it. | The pages, and the index |
+
+A kind is a table of `folders` (a pattern) and `files` (patterns inside each folder); a new kind,
+or a new file in a kind, is a tightening. Retired names are matched in any case, and the manifest
+that holds them is never read; an allowance names a file and the whole text of one line, and
+covers that line once. A page cites a path through a link, or a code span in prose that holds a
+path with a folder in it; a path is listed when the index cites it, or a folder that holds it.
 
 ### Gate: docs — a page renders as it was written
 
@@ -629,7 +643,8 @@ Themis/
 │   ├── proofs.py         worlds and plants; external.py runs external checks
 │   ├── hooks.py          the agent hooks; render.py writes the generated pages
 │   ├── checkpoint.py     the handoff; reporters.py, pytest_plugin.py, gitlog.py, paths.py
-│   ├── gates/            the core's fifteen gates
+│   ├── markdown.py       which lines of a page are prose, as CommonMark reads them
+│   ├── gates/            the core's seventeen gates
 │   ├── pack/             the pack interface and the pack test kit
 │   └── packs/
 │       ├── trading/      the trading pack

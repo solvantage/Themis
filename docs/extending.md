@@ -37,10 +37,32 @@ max_age_days = 30
 | Minimum | Items needed to decide, a required score | Higher |
 | Set that allows | A role's paths, allowed tiers, a closed list | Smaller |
 | Set that requires | Governed documents, protected paths, required fields | Larger |
+| Table of sets | `layout/required-files`'s kinds: a folder pattern and the files it needs | Key by key: a new kind or a new file is a tightening |
 
 A value with no stricter direction, such as a folder name, cannot be classified. Setting it for
 the first time turns a rule on, which is a tightening. Changing it afterwards is treated as a
 weakening, because a path pointed somewhere else can hide what the rule was guarding.
+
+The rules that read a project's pages and folders take path patterns:
+
+```toml
+[rules."layout/required-files"]
+kinds.tool = { folders = "tools/*", files = ["README.md", "*.py"] }    # each tools/ folder holds both
+
+[rules."layout/retired-names"]
+names = ["old-name"]                                                   # in any case, in text or a path
+allow = [{ file = "docs/history.md", line = "Formerly old-name." }]   # the whole line, once
+
+[rules."layout/no-ignored-citations"]
+pages = ["**/*.md"]
+index = ["docs/kept-elsewhere.md"]          # git-ignored paths this tracked page lists may be cited
+
+[rules."views/untouched"]
+pages = ["docs/**/*.md"]                    # pages a generator stamped with a hash
+
+[rules."docs/no-bare-dollar-pairs"]
+pages = ["**/*.md"]
+```
 
 ### Standards
 
