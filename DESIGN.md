@@ -212,9 +212,14 @@ never passes.
 Each rule can be `off`, `warn` or `enforce`, and can bind from a date. Every rule starts at
 `warn`: it runs and is shown, and cannot fail the run. A rule that lacks a setting it needs says
 **not configured** and does not run. `themis describe` counts every rule that is off, not
-configured or unproven, so silence is never mistaken for a pass.
+configured or unproven, so silence is never mistaken for a pass. It runs each rule to learn that,
+since a rule may need a table only its run reads, so `describe` and `describe --status` count
+the same.
 
-A pack adds its own gates beside these. Packs never weaken a core rule.
+A pack adds its own gates beside these. Packs never weaken a core rule. The full catalogue, the
+core's rules and every pack's in one place, with each rule's gate, promise, level and proof
+count, is written from the rules themselves by `themis describe --markdown`, so it is never out
+of date.
 
 ### Gate: order — things happen in the declared order
 
@@ -570,7 +575,7 @@ The full contract, with the pack interface and the pack test kit, is in
 | Command | Purpose |
 | --- | --- |
 | `themis init` | Write a starter `themis.toml` and the local `.themis/` folder |
-| `themis describe` | Print every gate, rule and proof; count what is off, not configured or unproven |
+| `themis describe [--status] [--markdown]` | Print every gate, rule and proof; count what is off, not configured or unproven. `--status` adds what each rule finds now; `--markdown` prints the full catalogue of core and pack rules |
 | `themis check [RULE ...] [--changed] [--reporter ...]` | Run the rules on the repository |
 | `themis prove [RULE ...]` | Run the proofs, and hold each turned-on pack to the pack contract |
 | `themis explain RULE` | A rule's promise, the incident behind it, its parameters and its proofs |

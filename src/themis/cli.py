@@ -86,8 +86,50 @@ def command_check(args: argparse.Namespace) -> int:
     return report.exit_code
 
 
+def _catalogue(manifest: manifests.Manifest | None) -> str:
+    """Every rule of the core and of every pack Themis can find, as Markdown tables."""
+    import pkgutil
+    from importlib import metadata
+
+    from themis import gates, pack, packs
+
+    gates.load_all()
+    names = {found.name for found in pkgutil.iter_modules(packs.__path__) if found.ispkg}
+    names |= {entry.name for entry in metadata.entry_points(group="themis.packs")}
+    for name in sorted(names):
+        try:
+            pack.load(name)
+        except pack.PackError:
+            continue  # a pack that cannot load has no rules to list; `themis doctor` names it
+    usable = manifest if manifest is not None and manifest.present and not manifest.problems else None
+    active = {rule.id for rule in usable.active_rules()} if usable else set()
+    owners = sorted({rule.pack for rule in RULES.values()}, key=lambda owner: (owner != "core", owner))
+    lines = [
+        "# Themis rule catalogue", "",
+        f"Written by `themis describe --markdown` (themis {__version__}), from the rules themselves: every rule of "
+        "the core and of each pack, with its gate, its promise, its level and the proofs it carries.", "",
+        "Level is " + (f"the one project {usable.name} sets; `pack off` marks a pack it has not turned on."
+                       if usable else "the default: a rule a project does not name runs at `warn`."), "",
+    ]
+    for owner in owners:
+        rules = sorted((rule for rule in RULES.values() if rule.pack == owner), key=lambda rule: rule.id)
+        gate_names = {rule.gate for rule in rules}
+        lines += [f"## {owner}", "", f"{len(rules)} rules in {len(gate_names)} gates.", "",
+                  "| Rule | Gate | Promise | Level | Proofs |", "| --- | --- | --- | --- | --- |"]
+        for rule in rules:
+            level = (usable.setting(rule).level if rule.id in active else "pack off") if usable else "warn"
+            promise = rule.promise.replace("|", "\\|")
+            lines.append(f"| `{rule.id}` | {rule.gate} | {promise} | {level} | {len(PROOFS.get(rule.id, []))} |")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def command_describe(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
+    if args.markdown:
+        found = manifests.load(root)
+        print(_catalogue(found), end="")
+        return EXIT_PASS
     manifest = _load(root)
     if manifest is None:
         return EXIT_REFUSE
@@ -111,16 +153,15 @@ def command_describe(args: argparse.Namespace) -> int:
         if rule.gate != gate:
             gate = rule.gate
             lines += ["", f" {gate}"]
-        result = engine.run_rule(rule, manifest) if args.status else None
-        setting = manifest.setting(rule)
+        # A rule can learn it is not configured only by running: a table it reads may be missing. So
+        # each rule runs, with or without --status, and both count the same.
+        result = engine.run_rule(rule, manifest)
         standing = proofs.standing(rule.id)
-        configured = not [name for name in rule.requires if setting.params.get(name) in (None, "", [], {})]
-        state = setting.level if configured else "not configured"
-        if result is not None and result.status == "not configured":
-            state = "not configured"
+        state = "not configured" if result.status == "not configured" else manifest.setting(rule).level
         if standing != "proven" or state in ("off", "not configured"):
             unproven += 1
-        lines.append(f"   {rule.id:<34} {state:<15} {standing}")
+        now = f"  now: {result.verdict.value}" if args.status and result.verdict is not None else ""
+        lines.append(f"   {rule.id:<34} {state:<15} {standing}{now}")
         lines.append(f"       {rule.promise}")
     if manifest.external:
         lines += ["", " ext"]
@@ -729,7 +770,9 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--reporter", action="append", help="terminal, compact, json or sarif; add :FILE to write a file")
 
     describe = add("describe", command_describe, "List every gate, rule and proof, and what is not in force.")
-    describe.add_argument("--status", action="store_true", help="also run each rule, to show which are not configured")
+    describe.add_argument("--status", action="store_true", help="also show what each rule finds on this repository now")
+    describe.add_argument("--markdown", action="store_true",
+                          help="print the full catalogue, every core and pack rule, as Markdown tables")
 
     prove = add("prove", command_prove, "Show that each rule and each external check can fail.")
     prove.add_argument("rules", nargs="*", help="only these rule ids")
