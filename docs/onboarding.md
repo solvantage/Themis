@@ -1,6 +1,6 @@
 # Getting started with Themis
 
-> 2026-11-19, for release 0.2.0. Every command and every message quoted here was run against a
+> 2026-11-19, for release 0.2.1. Every command and every message quoted here was run against a
 > release: T1–T3 and M1–M3 against 0.1.0, G1 and T4 against 0.2.0. The messages of G1 and T4 are
 > held to what this release prints by `tests/test_onboarding.py`.
 
@@ -23,7 +23,7 @@ content cases.
 | No number without a record | A number in a governed page carries a tag naming its record, and must match it. A cost must equal the tools' receipts. |
 | Built, never typed | Reports are built from the records. A page left behind by a later change fails. |
 | Checks that need eyes | A checklist row is ticked only by an attestation from its judge, tied to the hash of the file judged. |
-| Agent hooks | Before a command, the hook stops deletes, force-pushes, grants, the owner's own decisions and attestations, and edits to protected files, and asks you. At the end of each turn, a new failure keeps the turn open. |
+| Agent hooks | Before a command, the hook stops deletes, force-pushes, grants, the owner's own decisions and attestations, and edits to protected files, and asks you; in `allow-safe` mode it also allows what it knows is safe, and leaves the rest to your host. At the end of each turn, a new failure keeps the turn open. |
 | Git hooks | Before each commit `themis check --changed` runs, and before each push `themis check`, from your own terminal too. |
 | Guarded configuration | Loosening a threshold or switching a rule off fails until you grant it. Tightening is free. |
 | Every guard is proven | Each rule ships cases it must fail on. `themis prove` shows they still fail in your repository. |
@@ -117,6 +117,22 @@ The git hooks run `themis check --changed` before each commit and `themis check`
 push. Name their folder under `[agents]` as `git_hooks = ".githooks"`, and `agents/hooks-installed`
 fails when one goes missing or no longer runs Themis. A different hook already in that folder is
 kept unless you add `--force`.
+
+To stop being asked about everyday work, add `pretool = "allow-safe"` under `[agents]`, run
+`themis config lock` again, and commit; `themis config diff` lists the switch as a weakening, which
+needs your grant. The hook then gives three answers. It allows a call only when it reads every
+command in it and each is on its safe list: tools that only read, `git status`, `log`, `diff`,
+`add`, `commit -m`, `push -u origin BRANCH` for a branch other than main, writes inside the project
+away from protected files, and deletes inside a folder of `/tmp` or in `$TMPDIR` (`temp = [...]`
+names other folders). It is a best-effort list, not a sandbox: what it does not fully understand
+it leaves to your host. It asks,
+as before, for a delete elsewhere, work thrown away, a remote command or an upload, `themis grant`
+and your own decisions and attestations, and a write to a protected file or to one under
+`keep = [...]`; your `deny` patterns and the host's deny list are answered deny. Everything else,
+such as `python`, `npm test` or `make`, gets no answer, so your host's own permission mode decides
+as it did. To let your test or lint command through, name it exactly under `allow`, such as
+`allow = ["uv run --frozen pytest*"]`; the agent can then run whatever it writes into the tests.
+`themis doctor` prints the mode in force, and says when a host settings file cannot be read.
 
 **4. Look before you enforce.** Every rule starts at `warn`: it runs and reports, and blocks
 nothing.

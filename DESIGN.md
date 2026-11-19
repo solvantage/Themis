@@ -512,13 +512,88 @@ fails a project whose pack falls short.
 | `themis hooks install` | Writes three hooks into the host's settings, `.claude/settings.json`: before a tool call, session start, and end of turn. In a uv project they run `uv run --frozen --quiet themis`, held to the lock file. |
 | Which project | A hook judges the project named by `--root`, else the host's project folder (`$CLAUDE_PROJECT_DIR`), else the nearest folder holding a `themis.toml` at or above the shell's folder. The shell's folder only places a command's relative paths, so a shell outside the project cannot slip a protected edit past it. |
 | `themis hooks install --git [--path .githooks]` | Writes two git hooks, pre-commit (`themis check --changed`) and pre-push (`themis check`), and sets `core.hooksPath` to their folder. It keeps a different hook already there unless given `--force`. Declared as `git_hooks` under `[agents]`, they are checked by `agents/hooks-installed`. |
-| Before a tool call | Stops deletes, remote commands, a forced push, `themis grant`, the owner's own `themis decide` and `themis attest`, and any write to a protected file, for the owner's click. |
+| Before a tool call | Stops deletes, work thrown away, remote commands and uploads, a forced push, `themis grant`, the owner's own `themis decide` and `themis attest`, and any write to a protected or kept file, for the owner's click. In `allow-safe` mode it also allows what it reads in full and knows is safe (below). |
 | Session start | Remembers which breaches already exist, so old ones do not block new work. |
 | End of turn | Runs `themis check` against the main line. A new breach keeps the turn open. The host gives it 300 seconds. |
 | `--reporter=json` | One object per breach: rule id, location, why the rule exists, and the command that fixes it. |
 | `themis explain <rule>` | The rule's promise, the incident behind it, and a worked fix. |
 | `themis act` | Runs a guarded command only with the owner's unspent grant. A script that deletes or spends checks `themis act --verify` first, so it refuses to run where no hook can see it. |
 | `themis render` | Writes the pages listed under `[views]`, and the rules section of the instructions file named under `[agents]`. |
+
+**The hook before a tool call has two modes.** The keys sit under `[agents]`; all are optional,
+and with none of them the hook answers as it always did. A list of what is dangerous can never be
+complete, so `allow-safe` allows only from a list of what is known to be safe, and leaves the rest
+to the host.
+
+1. Deny: a project `deny` pattern matches a command the hook reads, or, in `allow-safe`, an entry
+   of the host's deny list does.
+2. Ask: a danger (below), a kept file, a project `ask` pattern, or, when it would allow, an entry
+   of the host's ask list.
+3. Allow, in `allow-safe` only: the hook reads every command in the call, and each is on the safe
+   list.
+4. Nothing: everything else. The host's own permission mode decides, as it would with no hook.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `pretool` | `"ask"` | `"ask"`: ask for a danger, say nothing about the rest. `"allow-safe"`: also allow what is known safe |
+| `temp` | `/tmp/*/**`, `/private/tmp/*/**`, `$TMPDIR/**` | In `allow-safe`, a delete or a write whose every literal target lies in one of these, past every link, and neither inside nor above the project, is safe: agents clean up their scratch clones. A folder of `/tmp` itself is not: other sessions may own it |
+| `keep` | none | Path patterns whose files are never deleted, moved or overwritten (any redirection, `mv`, `cp` onto, `rm`, `sed -i`, `tee`, `dd`, an edit) without the owner: data that exists only here |
+| `ask`, `deny` | none | Command patterns, `*` for any text, matched against each simple command the hook reads, also inside `sh -c`, `eval` and `$()`: `"scripts/deploy.sh prod*"` asks, a deny match is answered `deny` |
+| `allow` | none | In `allow-safe`, command patterns matched against a whole simple command with no variable or substitution in it, such as `"uv run --frozen pytest*"`: the only way a runner, a shell or an interpreter is ever allowed |
+
+| On the safe list | When |
+| --- | --- |
+| Tools that only read | `ls`, `cat`, `head`, `tail`, `wc`, `cut`, `diff`, `cmp`, `grep`, `tr`, `nl`, `comm`, `basename`, `dirname`, `realpath`, `readlink`, `stat`, `du`, `which`, the checksum tools, `pwd`, `echo`, `true`, `false`; `cd` to one folder (never zsh's `+N` stack forms); `sort` without `-o`, `uniq` with one file, `rg` without `--pre` or `-z`, `file` without `-C`, `date` without `-s`; `sed` that only prints (no `-i`, no script file, a print or a substitution without the `w` or `e` flag); `find` without `-delete`, `-exec`, `-ok` or `-fprint` |
+| Writes | `mkdir`, `touch` and every output redirection whose literal target lies in a temp folder, or in the project away from the protected and kept paths and the folders that hold them, and not under a folder made earlier in the same line; `/dev/null` and descriptor copies always. A target holding `#`, `^` or `~`, a glob under zsh's extended_glob, is never known |
+| Deletes | `rm` and `rmdir` whose every literal target lies in a temp folder, with no extended-glob character in it |
+| git, inside the project | Not in a repository nested in it, and not after a folder was made earlier in the line. `status`, `log`, `show`, `diff`, `rev-parse`, `rev-list`, `ls-files`, `ls-tree`, `blame`, `describe`, `shortlog`, `merge-base`, `cat-file`, `show-ref`, `grep`, `stash list` and `show`, `remote -v`; `branch` without delete, move, copy or force; `add`, not interactive; `commit` with its message, without `--amend`, `--no-verify` or an editor; `fetch` from a remote the repository names, with plain branch names, never a URL or `host:path`; `switch NAME` and `checkout NAME` of an existing local branch, or `switch -c NEW` and `checkout -b NEW` from a plain start point, and nothing else (no path, pathspec, glob or force); `merge --ff-only`; `worktree add` and `list`; and only `push [-u] REMOTE BRANCH`, of an existing local branch named plainly that is not `main`, `master` or the project's main under any name, to a remote the repository names with no push mapping or mirror configured. Options are matched exactly, never by an abbreviation git would accept; no `-c`, `--git-dir`, `--work-tree` or `GIT_*` variable |
+| `cd` | Always; where it moves the shell is followed only when proven (below) |
+
+Never on the list: an interpreter, a shell, a runner or a wrapper (`python`, `node`, `perl`,
+`ruby`, `bash`, `sh`, `awk`, `env`, `xargs`, `timeout`, `uv run`, `npx`, `make`, `rsync`, …), a
+program named by a path or in quotes or built from a variable, an assignment before a command, and
+anything the reader does not follow: arithmetic, `[[`, `case`, a function, an alias, `eval`,
+`source`. Nor `printf`, `test` or `[`: zsh reads printf's numeric arguments, and bash reads
+`test -v`'s subscripts, as arithmetic, which runs a `$(...)` written inside single quotes. A
+project may still name an exact form under `allow`.
+
+| How it reads | |
+| --- | --- |
+| The reader | Follows quotes, `$()` and backticks (each read in turn), here-documents, comments and every redirection form, zsh's included (`>`, `>>`, `>\|`, `>!`, `&>`, `&>>`, `&>!`, `>&!`, `>>&`, `>&FILE`, `<>`, …). It marks each word a variable, a glob, a brace list or a tilde will change, and refuses what it does not follow: a control or invisible character (a carriage return is part of a word to the shell), a redirection to a word starting with `!` or `\|`, any `${…}` but the plain `${NAME}`, zsh's `$~X` and its kin, arithmetic, `[[`, `case`, functions |
+| `cd` | Followed only for a bare `cd DIR` (with `-L` or `-P`): a literal folder that exists and can be entered, joined by `&&` to the commands after it, not after `\|\|`, not in a pipe, no CDPATH, and nothing before it in the line that changes files. A `..` is followed only with `-P`, since without it the shell reads `..` against the path as written, not past its links. Otherwise the folder is unknown: relative writes and deletes are never allowed, and the danger check reads them from the root and by file name |
+| Paths | Made absolute past every link, and compared in one Unicode form (NFC), since a Mac takes the NFD spelling of a name for the same file, and without regard to case. A protected or kept pattern also covers each folder that holds it, so `mv .claude x` asks |
+| Text it cannot read | A command the reader refuses, or a shell reading a pipe, is searched as raw text for the danger words; found, it asks. In `ask` mode, a command the 0.2.0 reader could not read still asks, as it did |
+| The host's lists | Read in `allow-safe` from `.claude/settings.json`, `.claude/settings.local.json`, the user's settings (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) and the managed settings, with the host's meaning: `Bash(x)` is exact, `Bash(x:*)` and `Bash(x *)` are `x` alone or followed by more, `*` is any text. Each simple command is matched with its redirections left out. A file it cannot read, or an ask or deny list that is not a list of text, gives no allow, and `themis doctor` says so. A host rule for edits leaves every edit to the host |
+| Guarded in `allow-safe` | Besides the protected paths: `.claude/**` and `.mcp.json` (the host's settings and the servers it starts), `.githooks/**`, `.husky/**`, `.pre-commit-config.yaml` and lefthook's files, the folder `core.hooksPath` names (with its parent, for a manager's `_` folder), `.themis/**` (the hook's own state), every `.git` file or folder at any depth, and in the user's home the host's folder and `~/.claude.json`. Also what the hook itself runs from, where a `.pth` file, a changed lock or a replaced script runs code at the next hook call: the interpreter's folders and the themis package wherever they are, `.venv/**`, `venv/**`, any `site-packages`, `pyproject.toml`, `uv.lock`, `uv.toml`, `requirements*.txt`, `.python-version`, `package.json`, `package-lock.json`, `node_modules/.bin/**` and a `sitecustomize.py` |
+
+**What it cannot protect.** `allow-safe` is a best-effort allow list, not a sandbox. It reads a
+command as text, ahead of the shell, and two readings of one line can differ; two reviews found
+lines where they did, each now refused and kept as a test, and more may exist. It does not confine
+what an allowed command then does: the commands on the list are chosen because what they do is
+small and known. So the answer it cannot give is the safe one: whatever it does not fully
+understand gets no answer, and the host's own permission mode, or its automatic check, still sees
+and decides it. Known gaps: aliases and functions from the user's own shell are not seen, so a
+safe name may run something else. An `allow` entry for a test runner lets the agent run whatever
+code it writes into the tests. A deny or ask pattern is matched only against the commands the hook
+reads; one it cannot read is never allowed, and the host's own lists then apply. The mode takes
+effect as soon as `themis.toml` is saved; switching to `allow-safe`, adding a `temp` folder or an
+`allow` entry is a weakening (section 14), which `config/no-silent-weakening` holds to the owner's
+grant.
+
+Dangers, judged in both modes: deletes (`rm`, `rmdir`, `unlink`, `shred`, `git rm`, `git clean`,
+`git worktree remove`, `find -delete`, `rsync --delete`, also behind `sudo`, `timeout`, `xargs` or
+`uv run`); work thrown away (`git reset --hard`, `git stash drop` or `clear`, a checkout of paths,
+of a glob or a `:` pathspec, or by force, a `git restore` of the working tree, a branch deleted or
+overwritten); `--no-verify`, and
+a `git -c` that runs a program or moves the hooks; remote shells and copies (`ssh`, `scp`, `sftp`,
+`rsync` to a host, `rclone`, …); uploads (`curl` or `wget` sending data, or a method other than
+GET, to a host that is not local) and deletes through a cloud tool; owner-only Themis commands,
+however launched; writes, moves and copies onto a protected or kept path, or into a folder holding
+one (every redirection, `dd of=`, `sed -i`, `perl -pi`, `cp`, `mv`, `rsync`, an archive unpacked);
+code given to an interpreter on its command line that deletes or runs programs.
+
+`themis hooks install` and `themis doctor` print the mode; `agents/hooks-installed` names it when
+the hook before a tool call is missing.
 
 **Deny the capability before writing the rule.** Where a tool can be taken away from an agent,
 take it away; a rule is for what cannot be removed. An agent with no login to a platform cannot
@@ -605,7 +680,8 @@ What counts as weakening:
 | A key added to a table that was already there, whose direction its pack does not state; a stated parameter that replaces the value a pack had set, in its looser direction | Yes |
 | A pack's key moved past its default in the looser direction, such as a window's `looks` raised above 1 | Yes |
 | The opposite of any of these; a new external check added | No |
-| An addition: a new table (a pack's, `[views]`, `[suite]`, `[agents]`), a new entry in a pack's table of entries (a window), a new list entry, a rule's required parameter first set, another `work` pattern | No |
+| The agent hook set to `pretool = "allow-safe"`; a `temp` folder or an `allow` pattern added under `[agents]` | Yes |
+| An addition: a new table (a pack's, `[views]`, `[suite]`, `[agents]`), a new entry in a pack's table of entries (a window), a new list entry, a rule's required parameter first set, another `work` pattern; a `keep` path or an `ask` or `deny` pattern under `[agents]` | No |
 | A change Themis cannot classify | Treated as weakening |
 
 `themis config diff` shows a branch's changes sorted into these two groups before the owner is
@@ -644,7 +720,7 @@ The full contract, with the pack interface and the pack test kit, is in
 | `themis calibrate` | Measure each gate on noise and on a planted effect; write the receipts |
 | `themis config diff`, `themis config lock` | Show what a change tightens and weakens; refresh the lock |
 | `themis hooks install [--git] [--path DIR] [--force]` | Install the agent hooks; with `--git`, the git hooks (pre-commit, pre-push) and `core.hooksPath` |
-| `themis hook EVENT` | Answer one hook event from the agent host, read from standard input. The installed hooks call it; people do not |
+| `themis hook EVENT` | Answer one hook event from the agent host, read from standard input. Before a tool call it answers deny, ask, nothing, or in `allow-safe` allow (section 13); a call it fails to judge asks. The installed hooks call it; people do not |
 
 **pytest plugin.** It ships in the same distribution. In a project with a `themis.toml`, every
 pytest run ends by writing the suite receipt: what ran, on which exact tree, how it ended, and
@@ -671,7 +747,8 @@ Themis/
 │   ├── standards.py      a declared standard and where a project sits below it; roles.py, work.py
 │   ├── records.py        record kinds and their homes; grants.py, receipts.py, claims.py
 │   ├── proofs.py         worlds and plants; external.py runs external checks
-│   ├── hooks.py          the agent and git hooks; render.py writes the generated pages
+│   ├── hooks.py          the agent and git hooks; shell.py reads a shell command for them
+│   ├── render.py         writes the generated pages
 │   ├── act.py            a guarded command, run once on an unspent grant
 │   ├── checkpoint.py     the handoff; reporters.py, pytest_plugin.py, gitlog.py, paths.py
 │   ├── markdown.py       which lines of a page are prose, as CommonMark reads them
@@ -700,6 +777,16 @@ strict = true                        # fail, not just list, a value below the st
 
 [config]
 protected = ["tools/check_*.py"]     # added to the paths no agent role may change
+
+[agents]                             # the agent hooks; section 13
+host = "claude"
+git_hooks = ".githooks"
+pretool = "allow-safe"               # default "ask"
+temp = ["/tmp/**", "$TMPDIR/**"]     # default: the system temp folders
+keep = ["data/raw/**"]               # never deleted, moved or overwritten without the owner
+ask = ["scripts/deploy.sh prod*"]    # command patterns that ask
+deny = ["scripts/wipe.sh*"]          # and that are denied
+allow = ["uv run --frozen pytest*"]  # whole commands allow-safe may allow
 
 [homes]                              # where this project keeps each kind of record
 ledger = "research/trials/*.toml"

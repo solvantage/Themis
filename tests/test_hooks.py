@@ -214,16 +214,21 @@ def test_a_project_run_with_uv_gets_hooks_that_run_through_uv(tmp_path: Path) ->
 #: (name, the line as it stands, the line broken, the command whose answer must flip)
 PLANTS = [
     ("deletes are let through", "if program in DELETERS or behind & DELETERS:", "if False:", "rm notes.md"),
-    ("a wrapper hides the delete", "behind = names if names & WRAPPERS else set()", "behind = set()", "sudo -u someone rm notes.md"),
+    ("a wrapper hides the delete", "behind = names if leading & WRAPPERS", "behind = set() if True else names if leading & WRAPPERS",
+     "sudo -u someone rm notes.md"),
     ("remote commands are let through", "if program in REMOTES or behind & REMOTES:", "if False:", "ssh host uptime"),
-    ("a command inside a shell string is not read", 'if program in SHELLS and "-c" in args', 'if False and "-c" in args', "bash -c 'rm -rf build'"),
-    ("git's options hide the subcommand", "index += 2 if args[index] in GIT_VALUED else 1", "index += 1", "git -C /somewhere clean -fdx"),
-    ("a forced push is let through", 'flag in ("--delete", "-d", "--force", "-f", "--mirror")', 'flag in ("--delete", "-d")', "git push -f"),
-    ("a branch delete is let through", 'if sub == "branch" and', 'if sub == "no-such" and', "git branch -D feature"),
-    ("an agent may grant itself", 'if _after_themis(words) == "grant":', "if False:", "uv run themis grant config"),
-    ("a redirect into a protected file is let through", 'if word in (">", ">>", ">|")', 'if word in ("no-such",)', "echo 'x = 1' > themis.toml"),
-    ("an in-place edit of a protected file is let through", 'any(arg.startswith("-i") for arg in args)', "False", "sed -i '' 's/enforce/warn/' themis.toml"),
-    ("an unreadable command is let through", 'return "Themis cannot read this command, so it cannot say it is safe."', "return None", "echo 'unbalanced"),
+    ("a command inside a shell string is not read", "        if code is not None:", "        if False:", "bash -c 'rm -rf build'"),
+    ("git's options hide the subcommand", "index += 2 if args[index] in GIT_VALUED else 1  # an option's value",
+     "index += 1  # an option's value", "git -C /somewhere clean -fdx"),
+    ("a forced push is let through", 'or _short(flag, "df")', 'or _short(flag, "d")', "git push -f"),
+    ("a branch delete is let through", 'if sub == "branch" and any(_long(flag, "delete")', 'if sub == "no-such" and any(_long(flag, "delete")',
+     "git branch -D feature"),
+    ("an agent may grant itself", 'if asked == "grant":', "if False:", "uv run themis grant config"),
+    ("a redirect into a protected file is let through", "reason = _write_danger(redirect.target, cwd, ctx)", "reason = None",
+     "echo 'x = 1' > themis.toml"),
+    ("an in-place edit of a protected file is let through", 'if _short(arg, "i"):', "if False:", "sed -i '' 's/enforce/warn/' themis.toml"),
+    ("an unreadable command is let through", "reading.danger or (UNREADABLE if reading.unreadable else None)", "reading.danger",
+     "echo 'unbalanced"),
 ]
 
 
@@ -231,7 +236,11 @@ def planted(old: str, new: str) -> types.ModuleType:
     assert SOURCE.count(old) == 1, f"the plant's target must occur exactly once: {old!r}"
     module = types.ModuleType("planted_hooks")
     module.__file__ = hooks.__file__
-    exec(compile(SOURCE.replace(old, new), "<planted hooks.py>", "exec"), module.__dict__)  # noqa: S102
+    sys.modules[module.__name__] = module  # a dataclass looks its module up while it is built
+    try:
+        exec(compile(SOURCE.replace(old, new), "<planted hooks.py>", "exec"), module.__dict__)  # noqa: S102
+    finally:
+        del sys.modules[module.__name__]
     return module
 
 
