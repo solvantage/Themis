@@ -55,22 +55,6 @@ def _published(ctx: Context) -> list[tuple[str, list[str]]]:
     return [(unit, files) for unit, files in sorted(units.studies(ctx).items()) if units.has_results(unit, files)]
 
 
-def _exempt(ctx: Context, unit: str, files: list[str]) -> bool:
-    """True when the rule binds from a date and this study's seal reached the main line before it.
-
-    A local mirror of `_exempt` in gates/order.py, kept to one function until the core shares one.
-    """
-    main = ctx.git.main_ref(ctx.manifest.project.get("main")) if ctx.since is not None else None
-    if main is None:
-        return False
-    arrivals = ctx.git.arrivals(main)
-    position = min((arrivals[name] for name in work.inside(unit, files, units.SEAL) if name in arrivals), default=None)
-    if position is None:
-        return False
-    date = ctx.git.commit_date(ctx.git.main_line(main)[position])
-    return date is not None and date < ctx.since.isoformat()
-
-
 def _bound(ctx: Context) -> list[tuple[str, list[str]]]:
     """The published studies this rule binds: of a kind it names, and not sealed before its date.
     A study whose kind cannot be read is bound, so a missing kind never excuses it."""
@@ -82,7 +66,8 @@ def _bound(ctx: Context) -> list[tuple[str, list[str]]]:
         return []
     every = set(units.KINDS) <= set(wanted)
     return [(unit, files) for unit, files in _published(ctx)
-            if (every or units.kind(ctx, unit, files) in (None, *wanted)) and not _exempt(ctx, unit, files)]
+            if (every or units.kind(ctx, unit, files) in (None, *wanted))
+            and not ctx.predates(work.inside(unit, files, units.SEAL))]  # sealed before its since
 
 
 def _study(world: World, kind: str = "strategy", seal: str = "", manifest: str = "") -> None:
