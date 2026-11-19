@@ -74,11 +74,13 @@ def _day(value: Any) -> dt.date | None:
     learned="Attempts that led nowhere were left out of the ledger, so the one that worked looked like the only one.",
 )
 def complete(ctx: Context) -> None:
-    held = {unit: work.inside(unit, files, ctx.param("results")) for unit, files in sorted(_units(ctx).items())}
+    units = _units(ctx)
+    held = {unit: work.inside(unit, files, ctx.param("results")) for unit, files in sorted(units.items())}
+    bound = ctx.bound(units)  # a unit begun before the rule's start date is not held to it
     rows = ctx.records("ledger")
     named = {work.named(held, str(row.get("work"))) for row in rows}
     for unit, results in held.items():
-        if not results:
+        if not results or unit not in bound:
             continue  # a folder with no result yet has nothing to count
         ctx.inspect()
         if unit not in named:
@@ -86,9 +88,12 @@ def complete(ctx: Context) -> None:
                        fix="add a ledger record whose work is this unit; an attempt that failed is counted too; "
                            "a folder name that several units share names none of them")
     for row in rows:
+        unit = work.named(held, str(row.get("work")))
+        if ctx.predates([row.path]) or (unit is not None and unit not in bound):
+            continue  # logged before the rule's start date, or the record of a unit begun before it
         ctx.inspect()
         state = row.get("state")
-        results = held.get(work.named(held, str(row.get("work"))) or "", [])
+        results = held.get(unit or "", [])
         if state not in STATES:
             said = "has no state" if state is None else f"has the state {state!r}"
             ctx.breach(f"this ledger record {said}; a state is promised, done or dropped", where=row.path,
@@ -271,6 +276,8 @@ def count_used(ctx: Context) -> None:
             ctx.refuse("this ledger record's logged day cannot be read", where=row.path,
                        fix="write logged as YYYY-MM-DD")
     for record in decisions:
+        if ctx.predates([record.path]):
+            continue  # a decision that reached the main line before the rule's start date
         ctx.inspect()
         decided = _day(record.get("decided_at"))
         if decided is None:
@@ -291,6 +298,39 @@ def count_used(ctx: Context) -> None:
             ctx.breach(f"this decision used a count of {int(stated)}, but the ledger holds {count} attempts{scope} "
                        f"up to {decided.isoformat()}", where=record.path,
                        fix="issue the decision again with the ledger's own count; every logged attempt counts")
+
+
+@proof("ledger/complete", "units and records from before the start date are exempt", expect="pass")
+def _(world: World) -> None:
+    world.manifest(COMPLETE_SETUP + '    since = "2026-06-01"\n')
+    world.write("work/old/results/out.csv", "1\n")  # no record: it predates the rule
+    _row(world, "gone", "dropped")  # no reason: it predates the rule
+    world.commit("before the rule")
+    world.on("2026-07-01")
+    _row(world, "a")
+    world.write("work/a/results/out.csv", "1\n")
+    world.commit("after the rule")
+
+
+@proof("ledger/complete", "a unit begun after the start date is still held to it", expect="fail",
+       contains="no ledger record names it")
+def _(world: World) -> None:
+    world.manifest(COMPLETE_SETUP + '    since = "2026-06-01"\n')
+    world.write("work/old/results/out.csv", "1\n")
+    world.commit("before the rule")
+    world.on("2026-07-01")
+    world.write("work/a/results/out.csv", "1\n")
+    world.commit("after the rule")
+
+
+@proof("ledger/complete", "a record logged after the start date is still held to it", expect="fail",
+       contains="gives no reason")
+def _(world: World) -> None:
+    world.manifest(COMPLETE_SETUP + '    since = "2026-06-01"\n')
+    world.commit("before the rule")
+    world.on("2026-07-01")
+    _row(world, "gone", "dropped")
+    world.commit("after the rule")
 
 
 COUNT_SETUP = """
@@ -400,6 +440,27 @@ def _(world: World) -> None:
     _three(world)
     world.manifest(COUNT_SETUP + '    count_key = "trials"\n')
     _decision(world)
+
+
+@proof("ledger/count-used", "a decision from before the start date is exempt; a later one is held", expect="fail",
+       contains="used a count of 1, but the ledger holds 3 attempts")
+def _(world: World) -> None:
+    _three(world)
+    world.manifest(COUNT_SETUP + '    since = "2026-06-01"\n')
+    _decision(world, "old", numbers={"attempts": 0})
+    world.commit("before the rule")
+    world.on("2026-07-01")
+    _decision(world, numbers={"attempts": 1})
+    world.commit("after the rule")
+
+
+@proof("ledger/count-used", "only decisions from before the start date: nothing to hold", expect="refuse",
+       contains="nothing was inspected")
+def _(world: World) -> None:
+    _three(world)
+    world.manifest(COUNT_SETUP + '    since = "2026-06-01"\n')
+    _decision(world, numbers={"attempts": 1})
+    world.commit("before the rule")
 
 
 @proof("ledger/count-used", "an empty ledger cannot be counted", expect="refuse", contains="the ledger holds no record")

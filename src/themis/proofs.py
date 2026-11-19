@@ -46,6 +46,7 @@ class World:
         self.root = Path(root)
         self._started = False
         self._clock = 0
+        self._day = "2026-01-01"
 
     # -- files ----------------------------------------------------------------------------------
 
@@ -72,12 +73,16 @@ class World:
             self._started = True
             self.git("init", "-q", "-b", "main")
         self._clock += 1
-        stamp = f"2026-01-01T00:{self._clock // 60:02d}:{self._clock % 60:02d}+00:00"
+        stamp = f"{self._day}T00:{self._clock // 60:02d}:{self._clock % 60:02d}+00:00"
         env = {**os.environ, **_GIT_ENV, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
         done = subprocess.run(["git", *args], cwd=self.root, env=env, capture_output=True, text=True, check=False)
         if done.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed in a proof world: {done.stderr.strip()}")
         return done.stdout
+
+    def on(self, day: str) -> None:
+        """Date the commits that follow on this day (YYYY-MM-DD), so a world's history spans time."""
+        self._day = day
 
     def commit(self, message: str = "work") -> str:
         """Commit everything on the current branch. The first commit starts the repository on `main`."""

@@ -34,14 +34,6 @@ def _units(ctx: Context) -> dict[str, list[str]]:
         return {}
 
 
-def _exempt(ctx: Context, main: str, position: int | None) -> bool:
-    """True when the rule binds from a date and this unit's seal arrived before it."""
-    if ctx.since is None or position is None:
-        return False
-    date = ctx.git.commit_date(ctx.git.main_line(main)[position])
-    return date is not None and date < ctx.since.isoformat()
-
-
 # -- order/sealed-first -------------------------------------------------------------------------
 
 
@@ -63,9 +55,9 @@ def sealed_first(ctx: Context) -> None:
         seals = work.inside(unit, files, ctx.param("seal"))
         if not results or not seals:
             continue  # nothing to order: no result yet, or a unit that was never sealed
+        if ctx.predates(seals):
+            continue  # sealed before the rule's start date
         sealed_at = min((arrivals[name] for name in seals if name in arrivals), default=None)
-        if _exempt(ctx, main, sealed_at):
-            continue
         ctx.inspect()
         if sealed_at is None:
             ctx.breach("this unit holds results, but its seal is not on the main line yet", where=unit,
@@ -170,6 +162,15 @@ def _(world):
     world.pull_request("both", PLAN, RESULT)
 
 
+@proof("order/sealed-first", "a unit sealed after the start date is still held to it", expect="fail",
+       contains="in the same merge as its seal")
+def _(world):
+    _start(world, SETUP + '    since = "2026-06-01"\n')
+    world.pull_request("old", {"work/old/PLAN.md": "the plan\n", "work/old/results/out.csv": "1\n"})
+    world.on("2026-07-01")
+    world.pull_request("both", PLAN, RESULT)
+
+
 # -- order/logged-first -------------------------------------------------------------------------
 
 
@@ -190,7 +191,7 @@ def logged_first(ctx: Context) -> None:
     logged: dict[str | None, list[str]] = {}
     for record in ctx.records("ledger"):
         logged.setdefault(work.named(units, str(record.get("work"))), []).append(record.path)
-    for unit, files in sorted(units.items()):
+    for unit, files in sorted(ctx.bound(units).items()):
         results = work.inside(unit, files, ctx.param("results"))
         if not results:
             continue
@@ -256,6 +257,24 @@ def _(world):
     world.pull_request("log", ROW)
 
 
+@proof("order/logged-first", "a unit begun before the start date is exempt; a later one is held", expect="pass")
+def _(world):
+    _start(world, LEDGER_SETUP + '    since = "2026-06-01"\n')
+    world.pull_request("old", {"work/old/results/out.csv": "1\n"})  # never logged: it predates the rule
+    world.on("2026-07-01")
+    world.pull_request("log", ROW)
+    world.pull_request("results", RESULT)
+
+
+@proof("order/logged-first", "a unit begun after the start date is still held to it", expect="fail",
+       contains="has no ledger record")
+def _(world):
+    _start(world, LEDGER_SETUP + '    since = "2026-06-01"\n')
+    world.pull_request("old", {"work/old/results/out.csv": "1\n"})
+    world.on("2026-07-01")
+    world.pull_request("results", RESULT)
+
+
 # -- order/unchanged ----------------------------------------------------------------------------
 
 
@@ -274,7 +293,10 @@ def unchanged(ctx: Context) -> None:
     arrivals, line = ctx.git.arrivals(main), ctx.git.main_line(main)
     amended = {(str(record.get("seal")), str(record.get("sha256"))) for record in ctx.records("amendment")}
     for unit, files in sorted(_units(ctx).items()):
-        for name in work.inside(unit, files, ctx.param("seal")):
+        seals = work.inside(unit, files, ctx.param("seal"))
+        if ctx.predates(seals):
+            continue  # sealed before the rule's start date
+        for name in seals:
             if name not in arrivals:
                 continue  # not sealed yet: a seal is the file's arrival on the main line
             ctx.inspect()
@@ -308,6 +330,33 @@ def _(world):
     world.commit("edit the notes")
     world.pull_request("seal", PLAN)
     world.pull_request("notes", {"notes.md": "another edit\n"})
+
+
+@proof("order/unchanged", "a seal from before the start date may change, beside a later one kept", expect="pass")
+def _(world):
+    _start(world, SEAL_SETUP + '    since = "2026-06-01"\n')
+    world.pull_request("old", {"work/old/PLAN.md": "the old plan\n"})
+    world.on("2026-07-01")
+    world.pull_request("seal", PLAN)
+    world.write("work/old/PLAN.md", "the old plan, edited\n")
+
+
+@proof("order/unchanged", "a seal from after the start date is still held to it", expect="fail",
+       contains="changed with no amendment record")
+def _(world):
+    _start(world, SEAL_SETUP + '    since = "2026-06-01"\n')
+    world.pull_request("old", {"work/old/PLAN.md": "the old plan\n"})
+    world.on("2026-07-01")
+    world.pull_request("seal", PLAN)
+    world.write("work/a/PLAN.md", "the plan, edited\n")
+
+
+@proof("order/unchanged", "a seal from before the start date is exempt", expect="refuse",
+       contains="nothing was inspected")
+def _(world):
+    _start(world, SEAL_SETUP + '    since = "2026-06-01"\n')
+    world.pull_request("old", {"work/old/PLAN.md": "the old plan\n"})
+    world.write("work/old/PLAN.md", "the old plan, edited\n")
 
 
 @proof("order/unchanged", "a seal edited afterwards", expect="fail", contains="changed with no amendment record")

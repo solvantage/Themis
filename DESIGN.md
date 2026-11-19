@@ -172,7 +172,9 @@ produced it, and its date. When the method later changes in a way that could fli
 citation of the old decision must be marked provisional.
 
 **History is never rewritten.** A rule can bind from a date, set with `since`. Work older than
-that date is left as it was written.
+that date is left as it was written. Every rule that inspects units of work reads the date the
+same way (`Context.predates`, `Context.bound`): a unit, a seal or a record that reached the main
+line in a commit dated before `since` is not held to the rule; one begun on or after it is.
 
 ## 7. The lifecycle — one shape, named by the pack
 
