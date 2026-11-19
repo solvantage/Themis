@@ -52,6 +52,13 @@ def _values(pattern: re.Pattern[str], text: str) -> list[tuple[int, str]]:
             for found in pattern.finditer(text)]
 
 
+def _was_safe(ctx: Context, main: str | None, path: str, pattern: re.Pattern[str], safe: str) -> bool:
+    """True when the main line holds this file with every switch at its safe value: a flip, not a default."""
+    before = ctx.git.show(main, path) if main else None
+    values = _values(pattern, before or "")
+    return bool(values) and all(value == safe for _, value in values)
+
+
 @rule(
     "live/off-by-default",
     "Every live-trading switch holds its safe value in the source, unless the owner granted that file its flip.",
@@ -88,9 +95,7 @@ def off_by_default(ctx: Context) -> None:
             granted = ctx.records("grant") if granted is None else granted
             if find_grant(granted, ACTION, path) is not None:
                 continue  # the owner said yes to this file holding its live value
-            before = ctx.git.show(main, path) if main else None
-            flipped = before is not None and _values(pattern, before) and all(
-                value == safe for _, value in _values(pattern, before))
+            flipped = _was_safe(ctx, main, path, pattern, safe)
             fix = f"set it back to {safe}; to trade live, the owner runs `themis grant {ACTION} {path} --reason ...`"
             for line, value in unsafe:
                 said = (f"the switch was {safe} on the main line and now holds {value}, with no grant from the owner"
