@@ -512,13 +512,38 @@ fails a project whose pack falls short.
 | `themis hooks install` | Writes three hooks into the host's settings, `.claude/settings.json`: before a tool call, session start, and end of turn. In a uv project they run `uv run --frozen --quiet themis`, held to the lock file. |
 | Which project | A hook judges the project named by `--root`, else the host's project folder (`$CLAUDE_PROJECT_DIR`), else the nearest folder holding a `themis.toml` at or above the shell's folder. The shell's folder only places a command's relative paths, so a shell outside the project cannot slip a protected edit past it. |
 | `themis hooks install --git [--path .githooks]` | Writes two git hooks, pre-commit (`themis check --changed`) and pre-push (`themis check`), and sets `core.hooksPath` to their folder. It keeps a different hook already there unless given `--force`. Declared as `git_hooks` under `[agents]`, they are checked by `agents/hooks-installed`. |
-| Before a tool call | Stops deletes, remote commands, a forced push, `themis grant`, the owner's own `themis decide` and `themis attest`, and any write to a protected file, for the owner's click. |
+| Before a tool call | Stops deletes, work thrown away, remote commands, a forced push, `themis grant`, the owner's own `themis decide` and `themis attest`, and any write to a protected or kept file, for the owner's click. In `allow-unless` mode it answers allow for everything else (below). |
 | Session start | Remembers which breaches already exist, so old ones do not block new work. |
 | End of turn | Runs `themis check` against the main line. A new breach keeps the turn open. The host gives it 300 seconds. |
 | `--reporter=json` | One object per breach: rule id, location, why the rule exists, and the command that fixes it. |
 | `themis explain <rule>` | The rule's promise, the incident behind it, and a worked fix. |
 | `themis act` | Runs a guarded command only with the owner's unspent grant. A script that deletes or spends checks `themis act --verify` first, so it refuses to run where no hook can see it. |
 | `themis render` | Writes the pages listed under `[views]`, and the rules section of the instructions file named under `[agents]`. |
+
+**The hook before a tool call has two modes.** The keys sit under `[agents]`; all are optional,
+and with none of them the hook answers as it always did.
+
+1. A deny pattern matches, the project's or, in `allow-unless`, the host's: the answer is deny.
+2. A danger, a kept file, or an ask pattern of the project or, in `allow-unless`, of the host: ask.
+3. Nothing else: `ask` says nothing, so the host's own prompts decide; `allow-unless` answers allow.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `pretool` | `"ask"` | `"ask"`: ask for a danger, say nothing about the rest. `"allow-unless"`: answer allow when nothing needs the owner |
+| `temp` | `/tmp/**`, `/private/tmp/**`, `/var/folders/**`, `$TMPDIR/**` | In `allow-unless`, a delete or a discard whose every target lies in one of these, past every link and outside the project, is allowed: agents clean up their scratch clones. Deletes anywhere else ask |
+| `keep` | none | Path patterns whose files are not deleted, moved or overwritten (`>`, `>>`, `mv`, `cp` onto, `rm`, `sed -i`, `tee`, an edit) without the owner: data that exists only here |
+| `ask`, `deny` | none | Command patterns, `*` for any text, matched against each simple command: `"scripts/deploy.sh prod*"` asks, a deny match is answered `deny` |
+
+| What the hook always judges | How |
+| --- | --- |
+| Dangers | Deletes (`rm`, `rmdir`, `unlink`, `shred`, `git rm`, `git clean`, `git worktree remove`, `find -delete` or `-exec rm`, a branch delete, `git push --delete` or `:ref`); work thrown away (`git reset --hard`, `git stash drop` or `clear`, `git checkout -- PATHS`, a `git restore` of the working tree); remote shells; owner-only Themis commands; writes to protected files |
+| A `cd` inside a command | Followed across `&&`, `;` and `\|\|`, with `pushd` and `popd`, from the payload's folder; not out of a subshell or a pipe. A folder it cannot know reads relative paths from the root, the stricter reading. Every target is made absolute; protected and kept paths match only inside the project, so a scratch `themis.toml` in a temp folder is not protected |
+| What the reading cannot see | A here-document, a loop, a `$()` or a quote it cannot close: the raw text is searched for the danger words, and for a write beside a protected or kept path. Found, it asks. Not found, `allow-unless` allows, and `ask` keeps asking for a command it cannot read |
+| The host's lists | In `allow-unless`, before answering allow, the hook reads `permissions.ask` and `permissions.deny` from `.claude/settings.json` and `.claude/settings.local.json` and honours each `Bash(PATTERN)` entry, so an allow never skips a host rule. A host rule for edits leaves edits to the host; a settings file it cannot read gets no allow. The local settings file is protected in this mode |
+
+`themis hooks install` and `themis doctor` print the mode; `agents/hooks-installed` names it when
+the hook before a tool call is missing. Switching to `allow-unless` or adding a `temp` folder is a
+weakening (section 14).
 
 **Deny the capability before writing the rule.** Where a tool can be taken away from an agent,
 take it away; a rule is for what cannot be removed. An agent with no login to a platform cannot
@@ -605,7 +630,8 @@ What counts as weakening:
 | A key added to a table that was already there, whose direction its pack does not state; a stated parameter that replaces the value a pack had set, in its looser direction | Yes |
 | A pack's key moved past its default in the looser direction, such as a window's `looks` raised above 1 | Yes |
 | The opposite of any of these; a new external check added | No |
-| An addition: a new table (a pack's, `[views]`, `[suite]`, `[agents]`), a new entry in a pack's table of entries (a window), a new list entry, a rule's required parameter first set, another `work` pattern | No |
+| The agent hook set to `pretool = "allow-unless"`; a `temp` folder added under `[agents]` | Yes |
+| An addition: a new table (a pack's, `[views]`, `[suite]`, `[agents]`), a new entry in a pack's table of entries (a window), a new list entry, a rule's required parameter first set, another `work` pattern; a `keep` path or an `ask` or `deny` pattern under `[agents]` | No |
 | A change Themis cannot classify | Treated as weakening |
 
 `themis config diff` shows a branch's changes sorted into these two groups before the owner is
@@ -644,7 +670,7 @@ The full contract, with the pack interface and the pack test kit, is in
 | `themis calibrate` | Measure each gate on noise and on a planted effect; write the receipts |
 | `themis config diff`, `themis config lock` | Show what a change tightens and weakens; refresh the lock |
 | `themis hooks install [--git] [--path DIR] [--force]` | Install the agent hooks; with `--git`, the git hooks (pre-commit, pre-push) and `core.hooksPath` |
-| `themis hook EVENT` | Answer one hook event from the agent host, read from standard input. The installed hooks call it; people do not |
+| `themis hook EVENT` | Answer one hook event from the agent host, read from standard input. Before a tool call it answers deny, ask, nothing, or in `allow-unless` allow (section 13). The installed hooks call it; people do not |
 
 **pytest plugin.** It ships in the same distribution. In a project with a `themis.toml`, every
 pytest run ends by writing the suite receipt: what ran, on which exact tree, how it ended, and
@@ -700,6 +726,15 @@ strict = true                        # fail, not just list, a value below the st
 
 [config]
 protected = ["tools/check_*.py"]     # added to the paths no agent role may change
+
+[agents]                             # the agent hooks; section 13
+host = "claude"
+git_hooks = ".githooks"
+pretool = "allow-unless"             # default "ask"
+temp = ["/tmp/**", "$TMPDIR/**"]     # default: the system temp folders
+keep = ["data/raw/**"]               # never deleted, moved or overwritten without the owner
+ask = ["scripts/deploy.sh prod*"]    # command patterns that ask
+deny = ["scripts/wipe.sh*"]          # and that are denied
 
 [homes]                              # where this project keeps each kind of record
 ledger = "research/trials/*.toml"

@@ -23,7 +23,7 @@ content cases.
 | No number without a record | A number in a governed page carries a tag naming its record, and must match it. A cost must equal the tools' receipts. |
 | Built, never typed | Reports are built from the records. A page left behind by a later change fails. |
 | Checks that need eyes | A checklist row is ticked only by an attestation from its judge, tied to the hash of the file judged. |
-| Agent hooks | Before a command, the hook stops deletes, force-pushes, grants, the owner's own decisions and attestations, and edits to protected files, and asks you. At the end of each turn, a new failure keeps the turn open. |
+| Agent hooks | Before a command, the hook stops deletes, force-pushes, grants, the owner's own decisions and attestations, and edits to protected files, and asks you; in `allow-unless` mode it allows everything else. At the end of each turn, a new failure keeps the turn open. |
 | Git hooks | Before each commit `themis check --changed` runs, and before each push `themis check`, from your own terminal too. |
 | Guarded configuration | Loosening a threshold or switching a rule off fails until you grant it. Tightening is free. |
 | Every guard is proven | Each rule ships cases it must fail on. `themis prove` shows they still fail in your repository. |
@@ -117,6 +117,18 @@ The git hooks run `themis check --changed` before each commit and `themis check`
 push. Name their folder under `[agents]` as `git_hooks = ".githooks"`, and `agents/hooks-installed`
 fails when one goes missing or no longer runs Themis. A different hook already in that folder is
 kept unless you add `--force`.
+
+To let the agent run freely and stop only for what is dangerous, add `pretool = "allow-unless"`
+under `[agents]`, run `themis config lock` again, and commit; `themis config diff` lists the switch
+as a weakening, which needs your grant. The hook then answers allow, so the host's own prompts no
+longer fire for what it allows. It still asks for a
+delete outside a temp folder, work thrown away (`git reset --hard`, `git stash drop`,
+`git checkout -- PATHS`, `git restore`), a remote shell, `themis grant` and your own decisions and
+attestations, a write to a protected file or to one under `keep = [...]`, a command it cannot read
+whose text names one of these, and any match of your `ask` patterns or the `Bash(...)` entries of
+your host's ask list; your `deny` patterns and the host's deny list are answered deny. Scratch
+clones in `/tmp` or `$TMPDIR` may be deleted without asking; `temp = [...]` names other folders.
+`themis doctor` prints the mode in force.
 
 **4. Look before you enforce.** Every rule starts at `warn`: it runs and reports, and blocks
 nothing.
