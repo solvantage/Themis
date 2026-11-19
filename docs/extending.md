@@ -57,8 +57,10 @@ named key in it loosens its default. A new list entry is a tightening, and one p
 of patterns are the same set. A key added to a table that was already there is a weakening, since
 nothing says which way it moves the checking; so is a removal, and a changed value. Two core
 tables are read their own way: a new `[[suite.skips]]` entry is a weakening and a removed one a
-tightening; any change to `[homes]` is a weakening, since it moves where records are read. A
-rule's `since` set for the first time stays a weakening.
+tightening; any change to `[homes]` is a weakening, since it moves where records are read. The
+agent hook's keys under `[agents]` carry directions as a pack's would: `pretool = "allow-safe"`, a
+new `temp` folder and a new `allow` pattern are weakenings, a new `keep` path or `ask` or `deny`
+pattern a tightening (DESIGN.md, section 13). A rule's `since` set for the first time stays a weakening.
 
 The rules that read a project's pages and folders take path patterns:
 
