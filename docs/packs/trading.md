@@ -123,8 +123,8 @@ Seventeen rules in five gates, beside the core's.
 | Rule | The promise | Parameters |
 | --- | --- | --- |
 | `scorecard/complete` | A study that books trades or predicts ships its scorecard, with no line left unexplained. | — |
-| `scorecard/believable` | A published result answers five questions about how far it can be believed. | — |
-| `scorecard/explainer` | A published result has one short page for a newcomer, or says why it has none. | `max_bytes`, `max_controls` |
+| `scorecard/believable` | A published result answers five questions about how far it can be believed. | `kinds` |
+| `scorecard/explainer` | A published result has one short page for a newcomer, or says why it has none. | `max_bytes`, `max_controls`, `kinds` |
 | `scorecard/rendering` | No page puts two bare dollar signs in one line, and no chart file is oversized. | `max_chart_bytes` |
 
 ### Core rules the pack configures
@@ -165,6 +165,9 @@ What the rules read, in more detail:
   could be missed, whether the sources are independent, and what is unexplained.
 - **`scorecard/explainer`.** The page is `results/explainer/index.html`, with one how-to-read
   box. A study with no page says `explainer: none` in its README, and why.
+- **`scorecard/believable` and `scorecard/explainer`** bind every kind of study unless `kinds`
+  names fewer, and a study whose kind cannot be read is always bound. Both honour `since`: a study
+  whose seal reached the main line before that date is left alone.
 
 ## 6. The gate functions
 
@@ -223,6 +226,7 @@ Everything here belongs to the project.
 | `validity/power-stated` | `min_power` | The least power a test must have had for its fail to stand |
 | `validity/audit-reproduced` | `forbidden` | Modules no audit script may import |
 | `scorecard/explainer` | `max_bytes`, `max_controls` | The caps on the explainer page |
+| `scorecard/believable`, `scorecard/explainer` | `kinds` | The kinds of study the rule binds; every kind when unset |
 | `scorecard/rendering` | `max_chart_bytes` | The cap on one page or picture under `results/` |
 
 ```toml
