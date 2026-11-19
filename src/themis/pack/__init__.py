@@ -64,6 +64,10 @@ class Pack:
     #: `inputs(root, manifest, subject, rival=None, *, as_of=None) -> dict`. A gate with a builder
     #: decides about a subject that is not one folder of work, and its numbers are never typed.
     inputs: dict[str, Callable[..., dict[str, Any]]] = field(default_factory=dict)
+    #: action -> what the pack writes when `themis act ACTION TARGET -- COMMAND` spends a grant,
+    #: before the command starts: `act(root, manifest, target, *, grant, now) -> the files written`.
+    #: It raises ValueError, having written nothing, when the action may not run.
+    actions: dict[str, Callable[..., list[Path]]] = field(default_factory=dict)
 
     def gate(self, name: str, *, version: str = "1") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Register a gate function under a name and a version."""

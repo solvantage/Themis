@@ -61,13 +61,13 @@ A study is one folder. The pack reads these files in it, and these records besid
 | Record | Where | Holds |
 | --- | --- | --- |
 | Trial | `ledger/*.toml` | `work`: the study's folder. `variants`: how many variants it covers; 1 when unset |
-| Pre-registration | `<study>/PRE-REG*.md` | Frontmatter: `kind`, the fields its kind needs, and where they apply `cost_model`, `title` and `not_run_reason` |
+| Pre-registration | `<study>/PRE-REG*.md` | Frontmatter: `kind`, the fields its kind needs, and where they apply `cost_model`, `title` and `not_run_reason`; the study's own windows as `window-<id>` (section 7) |
 | Provenance | `<study>/results/provenance.json` | `commit`, `clean` (must be true), and `inputs`: each input's path with its sha256 |
 | Metrics | `<study>/results/metrics.json` | The numbers the gate reads; `net_of_cost` and `costs_paid`; the `scorecard` table (section 9) |
 | Trade table | `<study>/results/trades.csv` | One row for each closed trade (section 8) |
 | Audit | `<study>/AUDIT.md` | Frontmatter: `status`, `script`, `study_code` |
 | Verdict | `decisions/*.json` | The core's decision record: the decision, the verdict, the gate and its version, the date, the numbers |
-| Look | `looks/*.toml` | `window`, `kind` (signal or pipeline), `at`, `grant`, and for a pipeline look its `scope`, `purpose` and `compared_against` |
+| Look | `looks/*.toml` | `window`, `study`, `kind` (signal or pipeline), `at`, `grant`, and for a pipeline look its `scope`, `purpose` and `compared_against` |
 
 ## 4. The lifecycle
 
@@ -136,10 +136,12 @@ Once `work` is set, the pack gives these core rules what they need, so a project
 | `order/sealed-first`, `order/unchanged` | The seal is `PRE-REG*.md` |
 | `order/logged-first`, `ledger/complete` | A result is anything under `results/` |
 | `report/generated`, `report/readable` | The report is `results/report.html`, built from the trade table, the metrics and the audit |
-| `grant/required` | The action `holdout` is guarded, when the manifest seals a window |
+| `grant/required` | The action `holdout` is guarded, when a window is sealed: in the manifest, a study table or a seal. A project that states its own `guarded` list replaces this one, so it keeps `holdout` in it |
 
 What the rules read, in more detail:
 
+- **`trials/settings-counted`.** With `since`, a study whose seal reached the main line before
+  that date is left alone, as the order rules leave it.
 - **`trials/count-feeds-adjustment`.** Metrics that hold `luck_adjusted_sharpe` must hold
   `trials_counted` beside it, and it must be at least the ledger's count plus the penalty. The
   count is of the trials the ledger held at the commit that last wrote the metrics file, so a
@@ -212,6 +214,8 @@ Everything here belongs to the project.
 | `[trading.windows.<name>]` | `from`, `to` | The window's dates |
 | | `sealed` | True for a window that opens only with a grant |
 | | `looks` | How many signal looks the window allows; 1 when unset |
+| `[trading.studies."<study>".windows.<name>]` | `from`, `to`, `sealed`, `looks` | A window of one study's own, keyed by the study's folder |
+| A study's seal | `window-<name>` | A window of the study's own, as an inline table: `{from = "2025-01-01", to = "2025-12-31", sealed = true}` |
 | `[trading.costs.<name>]` | `derivation` | Where the cost was measured. Any other key is the project's own |
 | `[trading.tune]` | `confirm_model` | The most faithful model a confirming run can use |
 | | `risk_rules`, `iterations` | Accepted, and read by no rule yet. Each `tune` study states its own in its seal, and `prereg/declared` checks them there |
@@ -234,6 +238,11 @@ to = "2024-12-31"
 sealed = true
 looks = 1
 
+[trading.studies."research/experiments/2026-01-10_rsi".windows.oos-2025]
+from = "2025-01-01"
+to = "2025-12-31"
+sealed = true
+
 [trading.costs.example]
 toll_per_side = 0.10
 unit = "USD per unit"
@@ -248,6 +257,14 @@ confirm_model = "real ticks"
 level = "enforce"
 min_power = 0.9
 ```
+
+**A study's own windows.** A study reads the project's windows and its own. A window id names one
+window wherever it is declared: studies that share an id give it the same dates, or
+`prereg/declared` fails the second declaration, and `holdout/one-signal-look` counts their looks
+together. So sibling studies on the same data share an id, and a study on other dates takes an id
+of its own. A look is keyed by its study and its window, and so is the grant that opens it:
+`themis grant holdout <study>/<window>`. A grant that names one of the project's windows alone
+opens it for one look by any study, as before.
 
 **The standard.** A project that sets `standard = "themis-trading/1"` under `[project]` says it
 holds this floor. These are all at `enforce`: the order, prereg, trials, holdout and decision
@@ -266,7 +283,7 @@ of, in `themis.packs.trading`.
 | --- | --- |
 | `trades.from_rows(rows, mapping)` | Turns rows from any engine, whatever its columns are called, into standard trades |
 | `trades.write_trades`, `trades.read_trades` | Write and read the standard trade table. A table that breaks the standard is refused, with the row and the reason |
-| `data.window(root, manifest, name, grant=...)` | Hands over a window's dates. A sealed window needs an unused grant for it, and the look is written down first |
+| `data.window(root, manifest, name, grant=..., study=...)` | Hands over a window's dates. A sealed window needs an unused grant for it, and the look is written down first |
 | `scorecard.compute`, `report.write_report` | What `themis report` calls |
 
 The standard trade table has one row for each closed trade: `entry_time`, `exit_time`, `side`,
@@ -275,9 +292,10 @@ The standard trade table has one row for each closed trade: `entry_time`, `exit_
 the trade. One table means one scorecard, so a strategy from any engine can be laid beside any
 other.
 
-A look at sealed data goes like this. The owner runs `themis grant holdout <window> --reason
-...`. The study's code calls `data.window` with that grant. The look record and an action receipt
-are written, and only then are the dates returned. The same grant does not open the window twice.
+A look at sealed data goes like this. The owner runs `themis grant holdout <study>/<window>
+--reason ...`. The study's code calls `data.window` with that grant and the study. The look record
+and an action receipt are written, and only then are the dates returned. The same grant does not
+open the window twice.
 
 ## 9. The report
 
