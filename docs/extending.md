@@ -251,10 +251,24 @@ What a rule may do with `ctx`: read files (`ctx.read`, `ctx.exists`, `ctx.files`
 (`ctx.records`), git history (`ctx.git`), the manifest and its own parameters (`ctx.param`). It
 says what it found with `ctx.inspect()`, `ctx.breach(...)`, `ctx.refuse(...)` and
 `ctx.not_configured(...)`. A rule that inspected nothing is a REFUSE, whatever else it said.
+A rule that binds from a date asks `ctx.predates(files)` (did the first of these files reach the
+main line before its `since`?) or keeps `ctx.bound(units)`, the units that do not predate it; it
+never reads the main line's dates itself.
+
+A pack's own `work` setting, such as `[trading] work`, is one glob or a list of them, as the
+core's is: `Either(str, [str])` in its schema, read with `themis.work.patterns`, with each unit and
+its files found by `themis.work.units`. A record that names a unit by folder name alone is matched
+with `themis.work.named`, which matches only when no other unit shares that folder name.
+
+```toml
+[trading]
+work = ["research/*", "systems/*/setups/*/tune"]    # a study is a folder under either
+```
 
 A proof builds a small repository from scratch in `world`: `write`, `remove`, `move`,
-`manifest`, and git with `commit`, `branch`, `checkout`, `merge` and `pull_request`. The proof
-holds only when the rule reaches the expected verdict, and, with `contains`, for that reason.
+`manifest`, and git with `commit`, `branch`, `checkout`, `merge` and `pull_request`; `on(day)`
+dates the commits that follow, for a proof of `since`. The proof holds only when the rule
+reaches the expected verdict, and, with `contains`, for that reason.
 
 An installed pack is found through a Python entry point named `themis.packs`.
 

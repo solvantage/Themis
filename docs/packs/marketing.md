@@ -1,7 +1,8 @@
 # The marketing content pack
 
-> 2026-11-16. Status: **built**. Standard id: `themis-marketing/1`. This page says
-> what the code does today. What was designed and is not built is listed in section 12.
+> 2026-11-16. Status: **built**: twenty-seven rules in six gates. Standard id:
+> `themis-marketing/1`. This page says what the code does today. What was designed and is not
+> built is listed in section 12.
 
 **In one line:** this pack teaches Themis what evidence means in marketing content. A fact has a
 dated source. A spend has a tool's receipt. A publish has the owner's grant. Which series leads,
@@ -411,6 +412,12 @@ the row's judge, on the file the row is judged from. The judge makes it with
 `judged_from` is not compared with the rulebook's entry. Any other value is read as `script`.
 
 ## 8. The results gate
+
+The pack has one gate function.
+
+| Gate | The question | What it must beat | A decision needs |
+| --- | --- | --- | --- |
+| `results` | Should a series lead, be kept or be retired, and does one item stand out? | The project's own median views, and the two series' numbers dealt out again at random | Results read at the agreed age, enough items in each series, and a difference larger than the noise |
 
 The gate turns result records into a decision about one series.
 `themis decide <series> --gate results --rival <other series>` builds the gate's inputs, asks the

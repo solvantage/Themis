@@ -1,6 +1,6 @@
 # Themis — guardrails as code for work done by AI agents
 
-> Design 0.2 — 2026-11-16. Status: **built**: the engine, the core, both packs and the Node
+> Design 0.2 — 2026-11-19. Status: **built**: the engine, the core, both packs and the Node
 > wrapper. What was designed and is not built is listed in section 18. `themis describe` lists
 > every rule that exists, and whether it is proven. What is released is in [RELEASES.md](RELEASES.md); how a
 > release is made is in [docs/publishing.md](docs/publishing.md).
@@ -219,7 +219,10 @@ the same.
 A pack adds its own gates beside these. Packs never weaken a core rule. The full catalogue, the
 core's rules and every pack's in one place, with each rule's gate, promise, level and proof
 count, is written from the rules themselves by `themis describe --markdown`, so it is never out
-of date.
+of date. The pages written by hand are held to the code by `tests/test_docs.py`: each rule's row
+and promise here and on its pack's page, the counts here, in the README and at the top of each
+pack page, each pack's kinds, gate functions and parameters, and every command `themis --help`
+lists in section 15.
 
 ### Gate: order — things happen in the declared order
 
@@ -636,6 +639,7 @@ The full contract, with the pack interface and the pack test kit, is in
 | `themis calibrate` | Measure each gate on noise and on a planted effect; write the receipts |
 | `themis config diff`, `themis config lock` | Show what a change tightens and weakens; refresh the lock |
 | `themis hooks install [--git] [--path DIR] [--force]` | Install the agent hooks; with `--git`, the git hooks (pre-commit, pre-push) and `core.hooksPath` |
+| `themis hook EVENT` | Answer one hook event from the agent host, read from standard input. The installed hooks call it; people do not |
 
 **pytest plugin.** It ships in the same distribution. In a project with a `themis.toml`, every
 pytest run ends by writing the suite receipt: what ran, on which exact tree, how it ended, and
@@ -662,7 +666,8 @@ Themis/
 │   ├── standards.py      a declared standard and where a project sits below it; roles.py, work.py
 │   ├── records.py        record kinds and their homes; grants.py, receipts.py, claims.py
 │   ├── proofs.py         worlds and plants; external.py runs external checks
-│   ├── hooks.py          the agent hooks; render.py writes the generated pages
+│   ├── hooks.py          the agent and git hooks; render.py writes the generated pages
+│   ├── act.py            a guarded command, run once on an unspent grant
 │   ├── checkpoint.py     the handoff; reporters.py, pytest_plugin.py, gitlog.py, paths.py
 │   ├── markdown.py       which lines of a page are prose, as CommonMark reads them
 │   ├── gates/            the core's seventeen gates

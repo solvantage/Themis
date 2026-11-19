@@ -1,7 +1,7 @@
 # The trading pack
 
-> 2026-11-16. Status: **built**. Standard id: `themis-trading/1`. `themis describe` lists each
-> rule below and whether its proofs hold.
+> 2026-11-19. Status: **built**: nineteen rules in six gates. Standard id: `themis-trading/1`.
+> `themis describe` lists each rule below and whether its proofs hold.
 
 **In one line:** this pack teaches Themis what evidence means in trading research. A trial is
 counted before it runs, the plan is sealed before the answer is known, unseen data is looked at
@@ -18,7 +18,7 @@ Turn it on in the manifest:
 packs = ["trading"]
 
 [trading]
-work = "research/experiments/*"
+work = "research/experiments/*"     # or a list: ["research/experiments/*", "systems/*/tune"]
 ```
 
 ## 1. What the pack adds to the core
@@ -60,7 +60,7 @@ A study is one folder. The pack reads these files in it, and these records besid
 
 | Record | Where | Holds |
 | --- | --- | --- |
-| Trial | `ledger/*.toml` | `work`: the study's folder. `variants`: how many variants it covers; 1 when unset |
+| Trial | `ledger/*.toml` | `work`: the study's path, or its folder name when no other study shares it. `variants`: how many variants it covers; 1 when unset |
 | Pre-registration | `<study>/PRE-REG*.md` | Frontmatter: `kind`, the fields its kind needs, and where they apply `cost_model`, `title` and `not_run_reason`; the study's own windows as `window-<id>` (section 7) |
 | Provenance | `<study>/results/provenance.json` | `commit`, `clean` (must be true), and `inputs`: each input's path with its sha256 |
 | Metrics | `<study>/results/metrics.json` | The numbers the gate reads; `net_of_cost` and `costs_paid`; the `scorecard` table (section 9) |
@@ -185,6 +185,10 @@ What the rules read, in more detail:
   whether it was flipped from the main line or written that way, until the owner runs `themis grant
   live <file>` for that file. A selected file with no switch is refused, or skipped with `absent =
   "skip"`. A pattern that matches no file, or has other than one capture group, is refused.
+- **`scorecard/rendering`.** It reads every Markdown page in a study with the core's reader, the
+  one `docs/no-bare-dollar-pairs` uses: a sign in a code span, a fence, an HTML block or a link
+  target is not prose, and a fence closes only as CommonMark says. A project that turns on the
+  core rule for every page still keeps this one for its studies' chart sizes.
 - **`scorecard/believable` and `scorecard/explainer`** bind every kind of study unless `kinds`
   names fewer, and a study whose kind cannot be read is always bound. Both honour `since`: a study
   whose seal reached the main line before that date is left alone.
@@ -233,7 +237,7 @@ Everything here belongs to the project.
 
 | Where | Parameter | Meaning |
 | --- | --- | --- |
-| `[trading]` | `work` | The folders that each hold one study |
+| `[trading]` | `work` | The folders that each hold one study: one glob, or a list of them. A study is named by its whole path, so two studies may share a folder name |
 | `[trading.windows.<name>]` | `from`, `to` | The window's dates |
 | | `sealed` | True for a window that opens only with a grant |
 | | `looks` | How many signal looks the window allows; 1 when unset |
@@ -384,6 +388,9 @@ Every rule has cases that pass, fail and refuse, and `themis prove` runs them. A
 | `trials/settings-counted` | Add a run with new settings and no trial | FAIL |
 | `validity/power-stated` | Record a kill with no power statement | FAIL |
 | `validity/audit-reproduced` | Name the study's own run script as its audit | FAIL |
+| `validity/same-basis` | Rank two runs from two different sessions side by side | FAIL |
+| `live/off-by-default` | Flip a live-trading switch on a branch with no grant | FAIL |
+| `scorecard/rendering` | Two prices on one line, after a shorter fence inside a long one | FAIL |
 | A gate function | Feed it noise; feed it a planted edge | It says no; it says yes |
 
 ## 11. What this pack cannot do

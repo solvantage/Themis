@@ -8,8 +8,9 @@ follows one sealed path, and every guard is proven able to say no.
 It is a generic core. A field plugs in as a **pack**; a project plugs in as a **manifest**. The
 core names no field and no project, and a test keeps it that way.
 
-**Status:** built. The engine, 50 core rules in 17 gates, the agent hooks, the pack interface,
-the trading pack, the marketing content pack and a wrapper for Node check runners all exist,
+**Status:** built. The engine, 50 core rules in 17 gates, the agent and git hooks, guarded
+commands (`themis act`), the pack interface, the trading pack (19 rules in 6 gates), the marketing
+content pack (27 rules in 6 gates) and a wrapper for Node check runners all exist,
 and every rule ships proofs that it can fail. What was designed and is not built is listed at the
 end of [DESIGN.md](DESIGN.md) and of each pack's document. Every release, with its commit, its
 test count and the line that installs it, is listed in **[RELEASES.md](RELEASES.md)**.
@@ -17,7 +18,7 @@ test count and the line that installs it, is listed in **[RELEASES.md](RELEASES.
 | Read | For |
 | --- | --- |
 | [RELEASES.md](RELEASES.md) | The releases, and how to install the newest |
-| [docs/onboarding.md](docs/onboarding.md) | Getting started in a trading repository: set-up, the daily loop, three scenarios |
+| [docs/onboarding.md](docs/onboarding.md) | Getting started: set-up with the agent and git hooks, the daily loop, a guarded command, a strategy tuned in an outside tester, and the other cases |
 | [DESIGN.md](DESIGN.md) | The core: laws, primitives, core rules, proofs, adoption |
 | [docs/extending.md](docs/extending.md) | Parameters, external checks, local packs, writing a pack |
 | [docs/packs/trading.md](docs/packs/trading.md) | The trading pack |
