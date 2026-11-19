@@ -146,9 +146,12 @@ def _versions(ctx: Context, path: str, column: str) -> dict[str, int] | None:
 def settings_counted(ctx: Context) -> None:
     studies, logged = units.studies(ctx), units.trials(ctx)
     named: dict[str, list[Any]] = {}  # a record may name its study by folder name alone, when no other shares it
+    folder_named: dict[str, str] = {}  # a folder name a record used that several studies share
     for name, rows in logged.items():
         if (found := work.named(studies, name)) is not None:
             named.setdefault(found, []).extend(rows)
+        elif sum(unit.rsplit("/", 1)[-1] == name.strip("/") for unit in studies) > 1:
+            folder_named[name.strip("/")] = name
     for unit, files in sorted(studies.items()):
         path = f"{unit}/{ctx.param('history').strip('/')}"
         if path not in files or ctx.predates(work.inside(unit, files, units.SEAL)):  # sealed before since
@@ -156,6 +159,12 @@ def settings_counted(ctx: Context) -> None:
         ctx.inspect()
         versions = _versions(ctx, path, ctx.param("settings_column"))
         rows = named.get(unit, [])
+        shared = folder_named.get(unit.rsplit("/", 1)[-1]) if not rows else None
+        if shared:
+            ctx.breach(f"the ledger record names {shared}, a folder name several studies share, so it counts for "
+                       "none of them", where=path, fix=f"name the study by its whole path in the record: work = "
+                       f'"{unit}"')
+            continue
         if not rows:
             ctx.breach("this study has a run history and no trial in the ledger", where=path,
                        fix="log the study in the ledger, with the variants it covers, and say why the record is late")
@@ -194,8 +203,9 @@ _prove("trials/settings-counted", _history, [
     ("a trial for another study does not count here", "fail", "no trial in the", {"trials": ({"work": "work/b"},)}),
     ("work is a list, and a trial names a folder name only this study has", "pass", None,
      {"trials": ({"work": "a", "variants": 3},), "other": "b"}),
-    ("a trial that names a folder name two studies share counts for neither", "fail", "no trial in the",
-     {"trials": ({"work": "a", "variants": 3},), "other": "a"}),
+    ("a trial that names a folder name two studies share counts for neither", "fail",
+     "the ledger record names a, a folder name several studies share", {"trials": ({"work": "a", "variants": 3},),
+                                                                         "other": "a"}),
     ("a run history with no settings column", "refuse", "has no column named settings_id", {"column": "preset"}),
     ("a run history that is not CSV", "refuse", "cannot be read as CSV", {"runs": '"s1'}),
     ("a trial whose variants is not a number", "refuse", "not a whole number", {"trials": ({"variants": "a few"},)}),
@@ -213,7 +223,8 @@ _prove("trials/settings-counted", _history, [
       pack="trading", params=(PENALTY,),
       learned="A figure was adjusted for the few trials of its own study, while the ledger held many more.")
 def count_feeds_adjustment(ctx: Context) -> None:
-    paths = [f"{unit}/{units.METRICS}" for unit in sorted(units.studies(ctx))]
+    paths = [f"{unit}/{units.METRICS}" for unit, files in sorted(units.studies(ctx).items())
+             if not ctx.predates(work.inside(unit, files, units.SEAL))]  # sealed before since
     held = {path: metrics.get(COUNTED) for path in paths if ADJUSTED in (metrics := units.read_json(ctx, path) or {})}
     if not held:
         return
@@ -254,11 +265,19 @@ def _ledger_at(ctx: Context, path: str, rows: list[Any]) -> list[Any]:
 
 
 def _adjusted(world: World, counted: Any = 4, ledger: tuple[Any, ...] = (3, None), extra: str = "",
-              later: int = 0, edited: bool = False) -> None:
+              later: int = 0, edited: bool = False, since: str | None = None) -> None:
     """A study whose metrics hold a luck-adjusted figure and its count, and a ledger of three variants and one.
 
     `later` commits the study, then logs that many more trials. `edited` then changes the metrics file.
+    With `since`, the study is sealed and merged on the main line first, the rule binds from that date,
+    and a second study, sealed later, holds a figure that used the ledger's count.
     """
+    if since:
+        extra += f'\n    [rules."trials/count-feeds-adjustment"]\n    since = "{since}"\n'
+        world.manifest(SETUP + extra)
+        world.write("work/a/PRE-REG.md", "---\nkind: strategy\n---\n")
+        world.commit("the seal")
+        world.write("work/b/results/metrics.json", json.dumps({ADJUSTED: 0.7, COUNTED: 4}))
     world.manifest(SETUP + extra)
     for name, variants in zip("ab", ledger):
         world.write(f"ledger/{name}.toml", _table({"work": f"work/{name}", "variants": variants}))
@@ -287,6 +306,9 @@ _prove("trials/count-feeds-adjustment", _adjusted, [
      {"counted": 3, "later": 3}),
     ("a figure computed again answers to the whole ledger", "fail", "a trial count of 4, but the ledger counts 7",
      {"later": 3, "edited": True}),
+    ("a study sealed before the rule's start date is left alone", "pass", None, {"counted": 3, "since": "2027-01-01"}),
+    ("a study sealed on the rule's start date is held to it", "fail", "a trial count of 3, but the ledger counts 4",
+     {"counted": 3, "since": "2026-01-01"}),
 ])
 
 

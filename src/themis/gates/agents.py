@@ -113,6 +113,32 @@ def _(world):
     (world.root / ".githooks/pre-push").chmod(0o755)
 
 
+@proof("agents/hooks-installed", "a pre-push hook that runs only the check of changed paths", expect="fail",
+       contains="the pre-push git hook does not run `themis check`")
+def _(world):
+    _git_hooks(world)
+    world.write(".githooks/pre-push", '#!/bin/sh\nexec themis check --changed\n')
+    (world.root / ".githooks/pre-push").chmod(0o755)
+
+
+@proof("agents/hooks-installed", "a hook that names the check only in a comment", expect="fail",
+       contains="the pre-commit git hook does not run `themis check --changed`")
+def _(world):
+    _git_hooks(world)
+    world.write(".githooks/pre-commit", "#!/bin/sh\n# exec themis check --changed\nexit 0\n")
+    (world.root / ".githooks/pre-commit").chmod(0o755)
+
+
+@proof("agents/hooks-installed", "hooks written by hand that run the checks through another command", expect="pass")
+def _(world):
+    _git_hooks(world)
+    world.write(".githooks/pre-commit", "#!/bin/sh\n# runs the rules\nset -e\nuv run --frozen themis check --changed\n")
+    world.write(".githooks/pre-push",
+                '#!/bin/sh\ncd "$(git rev-parse --show-toplevel)"\nexec python -m themis.cli check\n')
+    for event in ("pre-commit", "pre-push"):
+        (world.root / ".githooks" / event).chmod(0o755)
+
+
 @proof("agents/hooks-installed", "a git hook git cannot run", expect="fail", contains="is not executable")
 def _(world):
     _git_hooks(world)

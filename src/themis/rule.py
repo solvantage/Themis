@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from themis import paths
+from themis import paths, work
 from themis.gitlog import Git
 from themis.verdict import Finding, Verdict
 
@@ -167,10 +167,16 @@ class Context:
         date = self.git.commit_date(self.git.main_line(main)[first])
         return date is not None and date < self.since.isoformat()
 
-    def bound(self, units: Mapping[str, list[str]]) -> dict[str, list[str]]:
+    def bound(self, units: Mapping[str, list[str]], inner: Iterable[str] | None = None) -> dict[str, list[str]]:
         """The units this rule binds, as `themis.work.units` returns them: those that do not
-        predate its `since`."""
-        return {unit: files for unit, files in units.items() if not self.predates(files)}
+        predate its `since`. With `inner`, the patterns inside a unit of what the rule reads (its
+        results, its report), a unit is dated by those files alone: a folder begun before the date
+        still binds results first made after it."""
+        if inner is None:
+            return {unit: files for unit, files in units.items() if not self.predates(files)}
+        inner = list(inner)
+        return {unit: files for unit, files in units.items()
+                if not self.predates(work.inside(unit, files, inner))}
 
     @functools.cached_property
     def git(self) -> Git:

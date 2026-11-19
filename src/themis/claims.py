@@ -28,7 +28,8 @@ from typing import Any
 from urllib.parse import unquote
 
 _NAME = r"[\w.-]+"
-TAG = re.compile(r"<!--\s*t:(?P<work>" + _NAME + r")#(?P<key>" + _NAME + r"?)(?:\s+(?P<flag>[^\W\d]\w*))?\s*-->")
+_WORK = _NAME + r"(?:/" + _NAME + r")*"  # a unit by its folder name, or by its whole path when names are shared
+TAG = re.compile(r"<!--\s*t:(?P<work>" + _WORK + r")#(?P<key>" + _NAME + r"?)(?:\s+(?P<flag>[^\W\d]\w*))?\s*-->")
 DECISION = re.compile(r"<!--\s*d:(?P<work>" + _NAME + r"?)\s*-->")
 #: A receipt citation: `<!--r:KIND/NAME-->`. It stands for every number before it on its line.
 RECEIPT = re.compile(r"<!--\s*r:(?P<kind>" + _NAME + r")/(?P<name>[\w.+-]+)\s*-->")
@@ -333,15 +334,37 @@ def folder_name(folder: str) -> str:
     return folder.strip("/").rsplit("/", 1)[-1]
 
 
-def unit_names(units: Iterable[str]) -> dict[str, str]:
-    """Folder name -> unit folder. Raises ValueError when two units share a name."""
-    found: dict[str, str] = {}
-    for unit in sorted(units):
-        name = folder_name(unit)
-        if name in found:
-            raise ValueError(f"the units {found[name]} and {unit} share a folder name, so a tag cannot tell them apart")
-        found[name] = unit
-    return found
+class UnitNames(dict):
+    """Name -> unit folder: each unit by its whole path, and by its folder name when no other unit
+    has that folder name. `shared` holds each folder name several units have, with those units."""
+
+    def __init__(self, units: Iterable[str]) -> None:
+        units = sorted(units)
+        super().__init__({unit.strip("/"): unit for unit in units})
+        held: dict[str, list[str]] = {}
+        for unit in units:
+            held.setdefault(folder_name(unit), []).append(unit)
+        self.shared = {name: found for name, found in held.items() if len(found) > 1}
+        for name, found in held.items():
+            if len(found) == 1:
+                self.setdefault(name, found[0])
+
+    def unit(self, work: str) -> str:
+        """The unit a tag names. Raises ValueError, saying why, when it names none or names a folder
+        name several units share."""
+        if work.strip("/") in self:
+            return self[work.strip("/")]
+        if work in self.shared:
+            raise ValueError(f"the folder name {work} is shared by {', '.join(self.shared[work])}: name the unit "
+                             "by its whole path, such as " + self.shared[work][0].strip("/"))
+        raise ValueError(f"no unit of work has the folder name {work}, nor has it as its path")
+
+
+def unit_names(units: Iterable[str]) -> UnitNames:
+    """Each name a tag may use for a unit: its whole path, or its folder name when no other unit
+    shares it. Units that share a folder name are named by their paths, and only a tag that uses
+    the shared name is wrong."""
+    return UnitNames(units)
 
 
 def _load(root: Path, unit_folder: str, inner: str, what: str) -> tuple[str, dict[str, Any]]:
@@ -390,7 +413,7 @@ def resolve(root: Path, names: Mapping[str, str], work: str, key: str, metrics_p
 
     Raises ValueError with a plain reason when the unit, its metrics file or the key cannot be found.
     """
-    unit = names.get(work)
+    unit = names.unit(work) if isinstance(names, UnitNames) else names.get(work)
     if unit is None:
         raise ValueError(f"no unit of work has the folder name {work}")
     metrics = load_metrics(root, unit, metrics_path)
@@ -490,10 +513,13 @@ def cite(root: Path, units: Mapping[str, Any], work: str, key: str, metrics_path
     """The formatted number followed by its tag, ready to paste: `3.7<!--t:open-drive#uplift_half_stop-->`.
 
     `units` holds the unit folders, as `themis.work.units` returns them. `work` is a unit's folder
-    name. Raises ValueError when the work or the key is unknown, or the metrics cannot be read.
+    name, or its whole path when another unit has the same folder name. Raises ValueError when the
+    work or the key is unknown, or the metrics cannot be read.
     """
     value = resolve(root, unit_names(units), work, key, metrics_path)
-    for name in (work, key):
-        if not re.fullmatch(_NAME, name):
-            raise ValueError(f"{name!r} cannot be written in a tag; a tag holds letters, digits, `_`, `.` and `-`")
+    for name, pattern in ((work.strip("/"), _WORK), (key, _NAME)):
+        if not re.fullmatch(pattern, name):
+            raise ValueError(f"{name!r} cannot be written in a tag; a tag holds letters, digits, `_`, `.` and `-`, "
+                             "and `/` between the folders of a unit's path")
+    work = work.strip("/")
     return f"{format_number(value, decimals)}<!--t:{work}#{key}-->"

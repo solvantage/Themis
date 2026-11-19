@@ -12,7 +12,7 @@ from pathlib import Path
 
 from themis import __version__, configguard, engine, proofs, reporters, standards
 from themis import manifest as manifests
-from themis.rule import PROOFS, RULES
+from themis.rule import PROOFS, RULES, Rule
 from themis.verdict import Verdict
 
 EXIT_PASS, EXIT_FAIL, EXIT_REFUSE = 0, 1, 2
@@ -86,6 +86,14 @@ def command_check(args: argparse.Namespace) -> int:
     return report.exit_code
 
 
+def _level_now(rule: Rule, manifest: manifests.Manifest) -> str:
+    """The level a project runs a rule at, or "not configured" when the rule says so. A rule learns
+    that only by running, as in plain `themis describe`."""
+    if engine.run_rule(rule, manifest).status == "not configured":
+        return "not configured"
+    return manifest.setting(rule).level
+
+
 def _catalogue(manifest: manifests.Manifest | None) -> str:
     """Every rule of the core and of every pack Themis can find, as Markdown tables."""
     import pkgutil
@@ -117,7 +125,7 @@ def _catalogue(manifest: manifests.Manifest | None) -> str:
         lines += [f"## {owner}", "", f"{len(rules)} rules in {len(gate_names)} gates.", "",
                   "| Rule | Gate | Promise | Level | Proofs |", "| --- | --- | --- | --- | --- |"]
         for rule in rules:
-            level = (usable.setting(rule).level if rule.id in active else "pack off") if usable else "warn"
+            level = (_level_now(rule, usable) if rule.id in active else "pack off") if usable else "warn"
             promise = rule.promise.replace("|", "\\|")
             lines.append(f"| `{rule.id}` | {rule.gate} | {promise} | {level} | {len(PROOFS.get(rule.id, []))} |")
         lines.append("")
@@ -277,7 +285,7 @@ def command_config(args: argparse.Namespace) -> int:
     if old is None:
         print(f"{manifests.MANIFEST_FILE} is not on {against}: every setting is new, so nothing is weakened.")
         return EXIT_PASS
-    changes = configguard.classify(old, manifest.raw)
+    changes = configguard.classify(old, manifest.raw, manifest.root)
     for kind in ("weakening", "tightening", "neutral"):
         found = [change for change in changes if change.kind == kind]
         if found:

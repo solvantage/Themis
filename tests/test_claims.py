@@ -244,12 +244,27 @@ def test_metrics_that_cannot_be_read_say_why(tmp_path: Path, metrics: str, insid
         claims.load_metrics(tmp_path, "work/open-drive", inside)
 
 
-def test_a_unit_is_named_by_its_folder_and_two_cannot_share_a_name() -> None:
+def test_a_unit_is_named_by_its_folder_or_its_path_and_a_shared_name_names_neither() -> None:
     assert claims.unit_names(["work/open-drive", "work/2026-11-20_close-drive/"]) == {
         "open-drive": "work/open-drive", "2026-11-20_close-drive": "work/2026-11-20_close-drive/",
+        "work/open-drive": "work/open-drive", "work/2026-11-20_close-drive": "work/2026-11-20_close-drive/",
     }
-    with pytest.raises(ValueError, match="share a folder name"):
-        claims.unit_names(["alpha/work", "beta/work"])
+    names = claims.unit_names(["alpha/work", "beta/work", "solo"])  # units that share a name do not stop the rest
+    assert names.unit("beta/work") == "beta/work" and names.unit("solo") == "solo"
+    with pytest.raises(ValueError, match="the folder name work is shared by alpha/work, beta/work"):
+        names.unit("work")
+
+
+def test_cite_names_a_unit_by_its_path_when_its_folder_name_is_shared(tmp_path: Path) -> None:
+    for unit in ("alpha/tune", "beta/tune"):
+        (tmp_path / unit / "results").mkdir(parents=True)
+        (tmp_path / unit / "results/metrics.json").write_text('{"uplift": 0.5}', encoding="utf-8")
+    units = {"alpha/tune": ["alpha/tune/results/metrics.json"], "beta/tune": ["beta/tune/results/metrics.json"]}
+    cited = claims.cite(tmp_path, units, "beta/tune", "uplift", "results/metrics.json")
+    assert cited == "0.5<!--t:beta/tune#uplift-->"
+    assert claims.find_tags(f"It rose by {cited}.")[0].work == "beta/tune"
+    with pytest.raises(ValueError, match="name the unit by its whole path"):
+        claims.cite(tmp_path, units, "tune", "uplift", "results/metrics.json")
 
 
 def test_cite_writes_the_number_with_its_tag_and_the_pair_reads_back(tmp_path: Path) -> None:

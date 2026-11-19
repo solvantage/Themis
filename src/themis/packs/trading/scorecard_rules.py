@@ -5,8 +5,8 @@ answers about how far the result can be believed, one short page that explains i
 render as they were written.
 
 A study is "published" here once it has anything under `results/`. `scorecard/believable` and
-`scorecard/explainer` take the kinds of study they bind (`kinds`, every kind when unset) and honour
-`since`: a study whose seal reached the main line before that date is left alone.
+`scorecard/explainer` take the kinds of study they bind (`kinds`, every kind when unset). All four
+honour `since`: a study whose seal reached the main line before that date is left alone.
 `scorecard/rendering` reads a study's pages with the core's Markdown reader, the one
 `docs/no-bare-dollar-pairs` uses, so a sign in code, HTML or a link target is never counted.
 """
@@ -55,6 +55,11 @@ def _published(ctx: Context) -> list[tuple[str, list[str]]]:
     return [(unit, files) for unit, files in sorted(units.studies(ctx).items()) if units.has_results(unit, files)]
 
 
+def _sealed_before(ctx: Context, unit: str, files: list[str]) -> bool:
+    """True when the study's seal reached the main line before the rule's start date (its `since`)."""
+    return ctx.predates(work.inside(unit, files, units.SEAL))
+
+
 def _bound(ctx: Context) -> list[tuple[str, list[str]]]:
     """The published studies this rule binds: of a kind it names, and not sealed before its date.
     A study whose kind cannot be read is bound, so a missing kind never excuses it."""
@@ -67,7 +72,7 @@ def _bound(ctx: Context) -> list[tuple[str, list[str]]]:
     every = set(units.KINDS) <= set(wanted)
     return [(unit, files) for unit, files in _published(ctx)
             if (every or units.kind(ctx, unit, files) in (None, *wanted))
-            and not ctx.predates(work.inside(unit, files, units.SEAL))]  # sealed before its since
+            and not _sealed_before(ctx, unit, files)]
 
 
 def _study(world: World, kind: str = "strategy", seal: str = "", manifest: str = "") -> None:
@@ -88,6 +93,8 @@ def _study(world: World, kind: str = "strategy", seal: str = "", manifest: str =
 )
 def complete(ctx: Context) -> None:
     for unit, files in _published(ctx):
+        if _sealed_before(ctx, unit, files):
+            continue
         sealed = units.seal(ctx, unit, files)
         if sealed is None or sealed[1].get("kind") not in SCORED:
             continue
@@ -189,6 +196,30 @@ def _(world: World) -> None:
 @proof("scorecard/complete", "a data study owes no scorecard", expect="refuse", contains="nothing was inspected")
 def _(world: World) -> None:
     _study(world, kind="data")
+
+
+def _shipped_early(world: World, since: str, card: str | None = None) -> None:
+    """A study sealed and merged to main, then shipped with this scorecard, under the rule's start date."""
+    world.manifest(MANIFEST + f'\n[rules."scorecard/complete"]\nsince = "{since}"\n')
+    world.write(f"{STUDY}/PRE-REG.md", "---\nkind: strategy\n---\nThe plan.\n")
+    world.commit("the seal, before the rule binds")
+    world.write(f"{STUDY}/results/metrics.json", "{}\n")
+    world.write(f"{STUDY}/{units.SCORECARD}", _card() if card is None else card)
+    world.write("work/b/PRE-REG.md", "---\nkind: strategy\n---\nThe plan.\n")  # a study sealed later, shipped whole
+    world.write("work/b/results/metrics.json", "{}\n")
+    world.write(f"work/b/{units.SCORECARD}", _card())
+    world.write(f"work/b/{units.REPORT}", "<h1>The report</h1>\n")
+
+
+@proof("scorecard/complete", "a study sealed before the rule binds is left alone", expect="pass")
+def _(world: World) -> None:
+    _shipped_early(world, "2027-01-01")
+
+
+@proof("scorecard/complete", "a study sealed on the day the rule binds is held to it", expect="fail",
+       contains="this study has results and no report")
+def _(world: World) -> None:
+    _shipped_early(world, "2026-01-01")
 
 
 # -- scorecard/believable -----------------------------------------------------------------------
@@ -517,6 +548,8 @@ def _(world: World) -> None:
 )
 def rendering(ctx: Context) -> None:
     for unit, files in sorted(units.studies(ctx).items()):
+        if _sealed_before(ctx, unit, files):
+            continue
         for path in files:
             if not path.lower().endswith(".md"):
                 continue
@@ -549,6 +582,26 @@ The cost was `$3` on a `$100` stake.
 fee = $1 + $2
 ```
 """
+
+
+def _rendered_early(world: World, since: str) -> None:
+    """A study sealed and merged to main, whose README later puts two bare signs on one line."""
+    world.manifest(MANIFEST + f'\n[rules."scorecard/rendering"]\nsince = "{since}"\n')
+    world.write(f"{STUDY}/PRE-REG.md", "---\nkind: strategy\n---\nThe plan.\n")
+    world.commit("the seal, before the rule binds")
+    world.write(f"{STUDY}/README.md", "It made $12 on a $100 stake.\n")
+    world.write("work/b/README.md", "It made \\$12 on a \\$100 stake.\n")  # a study sealed later, written well
+
+
+@proof("scorecard/rendering", "a study sealed before the rule binds is left alone", expect="pass")
+def _(world: World) -> None:
+    _rendered_early(world, "2027-01-01")
+
+
+@proof("scorecard/rendering", "a study sealed on the day the rule binds is held to it", expect="fail",
+       contains="2 bare dollar signs")
+def _(world: World) -> None:
+    _rendered_early(world, "2026-01-01")
 
 
 @proof("scorecard/rendering", "one sign to a line, escaped signs, code spans and a code block", expect="pass")

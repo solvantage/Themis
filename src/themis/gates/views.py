@@ -67,12 +67,21 @@ def stamp(body: str, command: str) -> str:
     learned="A page built from data only one machine held was edited by hand, and no rerun elsewhere could tell.",
 )
 def untouched(ctx: Context) -> None:
+    main = ctx.git.main_ref(ctx.manifest.project.get("main"))
     for name in sorted({name for pattern in ctx.param("pages") for name in ctx.files(pattern)}):
         text = ctx.read(name)
         if text is None:
             continue  # not text, so not a page a generator stamps
         found = stamps(text)
         if not found:
+            # A page with no stamp is the project's own, unless it carried one on the main line:
+            # then the stamp was taken out, and taking it out is the edit this rule is for.
+            before = ctx.git.show(main, name) if main else None
+            if before is not None and (held := stamps(before)):
+                ctx.inspect()
+                ctx.breach("this page carried a stamp on the main line and carries none now, so it was edited after "
+                           f"`{held[0][1]}` wrote it", where=name,
+                           fix=f"run `{held[0][1]}` again, and change the generator, not the page")
             continue
         ctx.inspect()
         if len(found) > 1:
@@ -129,6 +138,24 @@ def _(world: World) -> None:
 @proof("views/untouched", "a line added under the stamp", expect="fail", contains="edited after `scripts/list_tools.py")
 def _(world: World) -> None:
     _project(world, stamp(TOOLS, COMMAND) + "A note typed later.\n")
+
+
+@proof("views/untouched", "a page edited by hand with its stamp line taken out", expect="fail",
+       contains="carried a stamp on the main line and carries none now")
+def _(world: World) -> None:
+    _project(world, stamp(TOOLS, COMMAND))
+    world.commit("the generated page")
+    world.branch("edit")
+    _project(world, TOOLS.replace("Builds the site", "Builds and ships the site"))
+
+
+@proof("views/untouched", "a page that never carried a stamp stays the project's own", expect="pass")
+def _(world: World) -> None:
+    _project(world, stamp(TOOLS, COMMAND))
+    world.write("docs/guide.md", "# A page written by hand\n")
+    world.commit("the pages")
+    world.branch("edit")
+    world.write("docs/guide.md", "# A page written by hand, and edited by hand\n")
 
 
 @proof("views/untouched", "two stamps on one page", expect="refuse", contains="more than one stamp")

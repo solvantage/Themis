@@ -139,7 +139,8 @@ def no_silent_weakening(ctx: Context) -> None:
     if old is None:
         ctx.refuse("the manifest on the main line cannot be read", where=manifests.MANIFEST_FILE)
         return
-    weakened = [change for change in configguard.classify(old, ctx.manifest.raw) if change.kind == "weakening"]
+    changes = configguard.classify(old, ctx.manifest.raw, ctx.root)
+    weakened = [change for change in changes if change.kind == "weakening"]
     if not weakened:
         return
     wanted = configguard.effective_hash(ctx.manifest)

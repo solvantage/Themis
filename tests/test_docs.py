@@ -162,6 +162,35 @@ def gate_problems(text: str, name: str) -> list[str]:
             + [f"a row for {gate}, which is not a gate function of the pack" for gate in sorted(listed - gates_)])
 
 
+def _schema_keys(spec: object, path: tuple[str, ...] = ()) -> set[tuple[str, ...]]:
+    """Every leaf key of a pack's schema as its path, at any depth. A `*` (any name) is kept as `*`
+    on the way down; a last `*` names no key, so `costs.*.*` is the key `costs.*`, the table itself."""
+    if isinstance(spec, dict):
+        return {key for inner, value in spec.items() for key in _schema_keys(value, (*path, inner))}
+    path = path[:-1] if path[-1:] == ("*",) else path
+    return {path} if path else set()
+
+
+def _key_path(token: str, name: str) -> tuple[str, ...]:
+    """`[trading.windows.<name>]` or `rulebooks.<name>.file` as a key path: `<...>` is `*`, and the
+    pack's own name is dropped."""
+    parts = [part.strip('"') for part in re.findall(r'"[^"]*"|[^.]+', token.strip("[]"))]
+    path = tuple("*" if part.startswith("<") else part for part in parts)
+    return path[1:] if path[:1] == (name,) else path
+
+
+def _documented_keys(rows: list[tuple[str, list[str]]], name: str) -> set[tuple[str, ...]]:
+    """Each key path a parameters row names: its first cell's table or key, and that table joined
+    with each other key the row ticks."""
+    found = set()
+    for first, tokens in rows:
+        for where in TICKED.findall(first):
+            base = _key_path(where, name)
+            found.add(base)
+            found |= {base + _key_path(token, name) for token in tokens if token != where}
+    return found
+
+
 def param_problems(text: str, name: str) -> list[str]:
     """Every parameter of every pack rule has a row that names the rule and the parameter; every key
     of the pack's own table is named; no row names a rule that does not exist."""
@@ -170,12 +199,9 @@ def param_problems(text: str, name: str) -> list[str]:
     problems = [f"no row names {rule.id} with its parameter {param.name}"
                 for rule in sorted(RULES.values(), key=lambda rule: rule.id) if rule.pack == name
                 for param in rule.params if not any({rule.id, param.name} <= row for row in tokens)]
-    parts = [{part for token in row for part in re.split(r'[.\[\]"<>\s]+', token) if part} for row in tokens]
-    schema = pack.load(name).schema
-    keys = [(key,) for key in schema] + [(key, sub) for key, spec in schema.items() if isinstance(spec, dict)
-                                         for sub in spec if sub != "*" and key != "*"]
-    problems += [f"no row names the key {'.'.join(key)} of [{name}]" for key in keys
-                 if not any(set(key) <= row for row in parts)]
+    named = _documented_keys(rows, name)
+    problems += [f"no row names the key {'.'.join(key)} of [{name}]"
+                 for key in sorted(_schema_keys(pack.load(name).schema)) if key not in named]
     problems += [f"a row names {token}, which is not a rule" for row in tokens for token in sorted(row)
                  if re.fullmatch(r"[a-z-]+/[a-z-]+", token) and token not in RULES]
     return problems
@@ -280,7 +306,10 @@ def test_a_gate_function_row_deleted_fails(name: str, row: str) -> None:
 
 
 @pytest.mark.parametrize(("name", "row"), [("trading", "| | `absent` |"), ("trading", "| `[trading]` | `work` |"),
-                                           ("marketing", "| `min_loops` |"), ("marketing", "| `spend.unit` |")])
+                                           ("trading", "| | `looks` |"), ("trading", "| `[trading.costs.<name>]` |"),
+                                           ("marketing", "| `min_loops` |"), ("marketing", "| `spend.unit` |"),
+                                           ("marketing", "| `results.retire.views_below_share_of_baseline` |"),
+                                           ("marketing", "| `rulebooks.<name>.applies_to` |")])
 def test_a_parameter_row_deleted_fails(name: str, row: str) -> None:
     assert param_problems(_without_row(page(DOCUMENTS[name]), row), name)
 

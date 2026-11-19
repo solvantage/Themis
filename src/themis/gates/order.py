@@ -191,7 +191,7 @@ def logged_first(ctx: Context) -> None:
     logged: dict[str | None, list[str]] = {}
     for record in ctx.records("ledger"):
         logged.setdefault(work.named(units, str(record.get("work"))), []).append(record.path)
-    for unit, files in sorted(ctx.bound(units).items()):
+    for unit, files in sorted(ctx.bound(units, ctx.param("results")).items()):  # results first made before since
         results = work.inside(unit, files, ctx.param("results"))
         if not results:
             continue
@@ -263,6 +263,15 @@ def _(world):
     world.pull_request("old", {"work/old/results/out.csv": "1\n"})  # never logged: it predates the rule
     world.on("2026-07-01")
     world.pull_request("log", ROW)
+    world.pull_request("results", RESULT)
+
+
+@proof("order/logged-first", "a folder begun before the start date, with results first made after it, is held",
+       expect="fail", contains="has no ledger record")
+def _(world):
+    _start(world, LEDGER_SETUP + '    since = "2026-06-01"\n')
+    world.pull_request("plan", {"work/a/PLAN.md": "the plan, written before the rule\n"})
+    world.on("2026-07-01")
     world.pull_request("results", RESULT)
 
 

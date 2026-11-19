@@ -295,13 +295,19 @@ switches = [{files = "strategies/**/*.py", pattern = '^LIVE\s*=\s*(\w+)', safe =
 fields = ["window", "cost_model", "session"]
 ```
 
+**Changing `[trading]`.** `config/no-silent-weakening` reads each key in its own direction. A new
+window, study window, cost model or study folder adds a check, and needs no grant. A window's
+`looks` raised above 1, `sealed` taken off, its dates moved, a cost model's figures changed or
+added, `confirm_model` changed, or `iterations` raised is a weakening, and needs the owner's grant.
+
 **A study's own windows.** A study reads the project's windows and its own. A window id names one
 window wherever it is declared: studies that share an id give it the same dates, or
 `prereg/declared` fails the second declaration, and `holdout/one-signal-look` counts their looks
 together. So sibling studies on the same data share an id, and a study on other dates takes an id
 of its own. A look is keyed by its study and its window, and so is the grant that opens it:
-`themis grant holdout <study>/<window>`. A grant that names one of the project's windows alone
-opens it for one look by any study, as before.
+`themis grant holdout <study>/<window>`, and `themis act holdout <study>/<window>` needs a grant
+for that exact target. A grant that names one of the project's windows alone opens it for one look
+read through `data.window`, or through `themis act holdout <window>`, which records no study.
 
 **The standard.** A project that sets `standard = "themis-trading/1"` under `[project]` says it
 holds this floor. These are all at `enforce`: the order, prereg, trials, holdout and decision

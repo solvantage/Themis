@@ -57,6 +57,9 @@ def test_the_catalogue_lists_every_rule_with_its_gate_promise_level_and_proofs(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     world = a_project(tmp_path)
     text = described(world, capsys, "--markdown")
+    plain = described(world, capsys)
+    states = {match[0]: match[1] for match in re.findall(r"^   ([a-z-]+/[a-z-]+)\s+(not configured|off|warn|enforce)\s",
+                                                       plain, flags=re.M)}
     gates.load_all()
     for name in ("trading", "marketing"):
         pack.load(name)
@@ -68,7 +71,8 @@ def test_the_catalogue_lists_every_rule_with_its_gate_promise_level_and_proofs(
         rule = RULES[rule_id]
         assert gate == rule.gate and promise == rule.promise.replace("|", "\\|")
         assert int(count) == len(PROOFS.get(rule_id, []))
-        assert level == ("pack off" if rule.pack != "core" else "warn")
+        assert level == ("pack off" if rule.pack != "core" else states[rule_id])  # as plain describe says
+    assert rows["agents/hooks-installed"][3] == "not configured" and rows["registry/indexed"][3] == "warn"
     assert f"## core\n\n{sum(rule.pack == 'core' for rule in RULES.values())} rules in" in text
 
 

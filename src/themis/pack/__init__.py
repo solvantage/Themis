@@ -31,6 +31,22 @@ class Standard:
 
 
 @dataclass(frozen=True)
+class Key:
+    """Which way one key of a pack's table moves the checking, for telling a tightening from a weakening.
+
+    `stricter` is "lower", "higher", "earlier", "larger" or "smaller", as for a rule's parameter, or
+    None for a value with no direction, such as a path: setting it the first time turns a check on,
+    and changing it afterwards is a weakening. `default` is what the pack reads when the key is
+    unset, so a value first written is compared with it. A table whose stricter direction is
+    "larger" holds entries, such as the windows: a new entry adds a check whatever it holds, and
+    "smaller" says a new entry lets more through.
+    """
+
+    stricter: str | None = None
+    default: Any = None
+
+
+@dataclass(frozen=True)
 class Calibration:
     """One known-answer test of a gate function, measured as a rate over many draws.
 
@@ -49,6 +65,10 @@ class Calibration:
 class Pack:
     name: str
     schema: dict[str, Any] = field(default_factory=dict)  # the spec of the pack's own manifest table
+    #: A key of the pack's table, dotted, with `*` for any one name -> which way it tightens. A key
+    #: named here is classified by its direction and default; a key added that is named nowhere is
+    #: a weakening, unless the table that holds it is new.
+    keys: dict[str, Key] = field(default_factory=dict)
     standards: dict[str, Standard] = field(default_factory=dict)
     #: Given the manifest, the parameters this pack sets for rules: {rule id: {param: value}}.
     defaults: Callable[[Any], dict[str, dict[str, Any]]] = lambda manifest: {}

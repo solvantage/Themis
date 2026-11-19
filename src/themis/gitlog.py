@@ -147,6 +147,27 @@ class Git:
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
+        if done.returncode == 128 and self._answers():
+            # One path git will not take, such as one beyond a symbolic link, fails the whole list.
+            # Ask path by path: a path git refuses is not one it ignores.
+            if len(names) == 1:
+                return set()
+            found: set[str] = set()
+            for name in names:
+                alone = self.ignored([name])
+                if alone is None:
+                    return None
+                found |= alone
+            return found
         if done.returncode not in (0, 1):  # 1: nothing among them is ignored
             return None
         return {name for name in done.stdout.split("\0") if name}
+
+    def _answers(self) -> bool:
+        """True when git can say what it ignores here at all, so a refusal was about one path."""
+        try:
+            done = subprocess.run(["git", "check-ignore", "-q", "--", "."], cwd=self.root, capture_output=True,
+                                  text=True, timeout=60, check=False)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+        return done.returncode in (0, 1)

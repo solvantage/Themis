@@ -7,8 +7,10 @@ gone, and no page sends a reader to a file a clone does not have.
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from themis import claims, markdown, paths, work
@@ -247,6 +249,19 @@ def citations(page: str, text: str) -> list[tuple[int, str]]:
     return found
 
 
+def _in_repository(root: Path, name: str) -> str | None:
+    """The path git is asked about for a cited name: the name with any symbolic link in it followed,
+    as git sees the file, and a trailing slash for a folder. None for a path that leaves the
+    repository, which no ignore file of this repository can cover. Git refuses a path that runs
+    beyond a link, and one such path would leave it unable to answer for the rest."""
+    top = Path(os.path.realpath(root))
+    real = Path(os.path.realpath(root / name))
+    if top not in real.parents:
+        return None
+    found = real.relative_to(top).as_posix()
+    return found + "/" if real.is_dir() else found
+
+
 def _listed(name: str, entries: set[str]) -> bool:
     return any(name == entry or name.startswith(f"{entry}/") for entry in entries)
 
@@ -274,13 +289,13 @@ def no_ignored_citations(ctx: Context) -> None:
             continue  # not text, so not a page
         ctx.inspect()
         cited += [(page, line, name) for line, name in sorted(set(citations(page, text)))]
-    asked = {name: name + "/" if (ctx.root / name).is_dir() else name for _, _, name in cited}
+    asked = {name: where for _, _, name in cited if (where := _in_repository(ctx.root, name)) is not None}
     ignored = ctx.git.ignored(sorted(set(asked.values())))
     if ignored is None:
         ctx.refuse("git cannot say which paths it ignores here", fix="run the check inside the git repository")
         return
     for page, line, name in cited:
-        if asked[name] in ignored and not _listed(name, entries):
+        if asked.get(name) in ignored and not _listed(name, entries):
             where_else = f", or list it in {' or '.join(ctx.param('index'))}" if ctx.param("index") else ""
             ctx.breach(f"this page cites {name}, which git ignores, so a clone does not have it", where=page,
                        line=line, fix=f"cite a tracked file, or track this one{where_else}")
@@ -327,6 +342,34 @@ def _(world: World) -> None:
        contains="cites output/2027/summary.csv")
 def _(world: World) -> None:
     _cited(world, "# Tools\n\nThe summary is in `output/2027/summary.csv`.\n")
+
+
+def _linked(world: World, page: str) -> None:
+    """The project above, with two tracked symbolic links: one to a folder outside the repository,
+    and one to the docs folder inside it."""
+    _cited(world, "# Tools\n")
+    os.symlink("../shared-elsewhere", world.root / "shared")
+    os.symlink("docs", world.root / "handbook")
+    world.write("README.md", page)
+    world.commit("the links")
+
+
+@proof("layout/no-ignored-citations", "paths beyond tracked symbolic links, inside and outside the repository",
+       expect="pass")
+def _(world: World) -> None:
+    _linked(world, "# Tools\n\nThe data is in `shared/2026/ticks.csv`; see [the manual](handbook/manual.md).\n")
+
+
+@proof("layout/no-ignored-citations", "an ignored file cited beside a path beyond a symbolic link", expect="fail",
+       contains="cites docs/vendor.pdf, which git ignores")
+def _(world: World) -> None:
+    _linked(world, "# Tools\n\nThe data is in `shared/2026/ticks.csv`; read [the guide](docs/vendor.pdf).\n")
+
+
+@proof("layout/no-ignored-citations", "an ignored file reached through a symbolic link", expect="fail",
+       contains="cites handbook/vendor.pdf, which git ignores")
+def _(world: World) -> None:
+    _linked(world, "# Tools\n\nRead [the guide](handbook/vendor.pdf).\n")
 
 
 @proof("layout/no-ignored-citations", "an ignored path cited with no index named", expect="fail",

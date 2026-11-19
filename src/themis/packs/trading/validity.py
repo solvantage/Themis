@@ -295,6 +295,7 @@ def power_stated(ctx: Context) -> None:
            "that stands states numbers.mde, the smallest effect its test could have seen, and numbers.power")
     for unit, found in sorted(units.decisions(ctx).items()):
         if unit in studies and units.kind(ctx, unit, studies[unit]) == "tune":
+            ctx.inspect(len(found))  # read and passed over, as a strategy's pass is
             continue  # a tune kill is a stage outcome, such as a budget spent or a stage failed: no weak test
         for record in found if unit in studies else ():
             ctx.inspect()
@@ -325,6 +326,11 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     _decided(world, "tune", **KILL, numbers={"settings_tried": 51, "budget": 50})
     _decided(world, name="b", **KILL, numbers={"mde": 0.02, "power": 0.8})
+
+
+@proof("validity/power-stated", "only a tune kill, read and passed over", expect="pass")
+def _(world: World) -> None:
+    _decided(world, "tune", **KILL, numbers={"settings_tried": 51, "budget": 50})
 
 
 @proof("validity/power-stated", "a strategy kill with no power, beside a tune kill", expect="fail",
@@ -578,9 +584,20 @@ def same_basis(ctx: Context) -> None:
                            "shown to share it", where=record.path, fix=f"record each run's {field} beside it")
                 continue
             held = [(run["run"], json.dumps(run[field], sort_keys=True)) for run in runs]
-            if len({value for _, value in held}) > 1:
+            if len({json.dumps(_basis(run[field]), sort_keys=True) for run in runs}) > 1:
                 ctx.breach(f"the runs differ in {field}: " + ", ".join(f"{run} has {value}" for run, value in held),
                            where=record.path, fix=fix)
+
+
+def _basis(value: Any) -> Any:
+    """A fingerprint value as it is compared: a whole number is one number, written as 2 or as 2.0."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {key: _basis(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_basis(item) for item in value]
+    return value
 
 
 BASIS = MANIFEST + """
@@ -602,6 +619,19 @@ def _compared(world: World, *runs: dict[str, Any], name: str = "a") -> None:
 def _(world: World) -> None:
     _compared(world, {"run": "a-1", "settings": "3f9a"}, {"run": "b-1", "settings": "77c0"})
     _compared(world, {"run": "a-1"}, {"run": "b-1"}, {"run": "c-1", "note": "a third"}, name="b")
+
+
+@proof("validity/same-basis", "one cost written as a whole number in one run and with a point in the other",
+       expect="pass")
+def _(world: World) -> None:
+    _compared(world, {"run": "a-1", "cost_model": {"toll": 2, "spread": [1, 0.5]}},
+              {"run": "b-1", "cost_model": {"spread": [1.0, 0.5], "toll": 2.0}})
+
+
+@proof("validity/same-basis", "two costs that differ, written as numbers", expect="fail",
+       contains="the runs differ in cost_model")
+def _(world: World) -> None:
+    _compared(world, {"run": "a-1", "cost_model": {"toll": 2}}, {"run": "b-1", "cost_model": {"toll": 2.5}})
 
 
 @proof("validity/same-basis", "runs from two different sessions", expect="fail",

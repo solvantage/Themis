@@ -76,7 +76,7 @@ def _day(value: Any) -> dt.date | None:
 def complete(ctx: Context) -> None:
     units = _units(ctx)
     held = {unit: work.inside(unit, files, ctx.param("results")) for unit, files in sorted(units.items())}
-    bound = ctx.bound(units)  # a unit begun before the rule's start date is not held to it
+    bound = ctx.bound(units, ctx.param("results"))  # a unit whose results predate the rule's start date is not held
     rows = ctx.records("ledger")
     named = {work.named(held, str(row.get("work"))) for row in rows}
     for unit, results in held.items():
@@ -317,6 +317,17 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     world.manifest(COMPLETE_SETUP + '    since = "2026-06-01"\n')
     world.write("work/old/results/out.csv", "1\n")
+    world.commit("before the rule")
+    world.on("2026-07-01")
+    world.write("work/a/results/out.csv", "1\n")
+    world.commit("after the rule")
+
+
+@proof("ledger/complete", "a folder begun before the start date, with results first made after it, is held",
+       expect="fail", contains="no ledger record names it")
+def _(world: World) -> None:
+    world.manifest(COMPLETE_SETUP + '    since = "2026-06-01"\n')
+    world.write("work/a/PLAN.md", "the plan, written before the rule\n")
     world.commit("before the rule")
     world.on("2026-07-01")
     world.write("work/a/results/out.csv", "1\n")

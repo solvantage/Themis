@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from themis.pack import Pack, Standard, register
+from themis.pack import Key, Pack, Standard, register
 from themis.schema import Required
 
 pack = register(Pack(
@@ -38,6 +38,21 @@ pack = register(Pack(
             "retire": {"views_below_share_of_baseline": float},
             "standout": {"views_times_baseline": float},
         },
+    },
+    # Which way each key tightens, so a change to [marketing] is classified. A key named nowhere here
+    # is a weakening when it is added to a table that was there, or changed.
+    keys={
+        "work": Key("larger"),
+        "evidence.max_age_days": Key("lower"),
+        "evidence.tiers": Key("smaller"),  # the tiers a row may have: a set that allows
+        "evidence.require": Key("larger"),  # a new kind of claim held to tiers adds a check
+        "evidence.require.*": Key("smaller"),  # the tiers that kind may rest on
+        "rulebooks": Key("larger"),
+        "rulebooks.*.max_age_days": Key("lower"),
+        "spend.run_ceiling": Key("lower"),
+        "results.min_age_days": Key("higher"),
+        "results.min_items_to_judge": Key("higher", 3),
+        "results.min_items_to_rank": Key("higher", 6),
     },
     kinds={
         "content": "one item to publish: a brief, its evidence, its checklist, its assets, a result once published",

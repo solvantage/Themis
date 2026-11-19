@@ -44,11 +44,21 @@ the first time turns a rule on, which is a tightening. Changing it afterwards is
 weakening, because a path pointed somewhere else can hide what the rule was guarding. `work` is a
 set that requires: one pattern or a list, and another pattern added is a tightening.
 
-A pack's own table has no stated directions, so it is read by shape. A new table, key or list
-entry is a tightening: it names more for the rules to check. A removal, or a changed value, is a
-weakening. Two core tables are read their own way: a new `[[suite.skips]]` entry is a weakening
-and a removed one a tightening; any change to `[homes]` is a weakening, since it moves where
-records are read. A rule's `since` set for the first time stays a weakening.
+A rule's parameter is compared with what was in force before it: the value its pack set for it,
+when the project had not stated one. So a stated `work` that replaces the folders a pack set is a
+weakening, not a first setting.
+
+A pack states the direction of each key of its own table with `Pack(keys=...)`: a dotted key,
+`*` for any one name, and a `Key(stricter, default)`. A key it names is compared with its default
+in that direction: a window's `looks` raised above 1 is a weakening. A table of entries whose
+direction is `larger`, such as the windows, gains a check with each new entry, whatever it holds.
+The rest is read by shape. A new table is a tightening, and so is every key inside it, unless a
+named key in it loosens its default. A new list entry is a tightening, and one pattern and a list
+of patterns are the same set. A key added to a table that was already there is a weakening, since
+nothing says which way it moves the checking; so is a removal, and a changed value. Two core
+tables are read their own way: a new `[[suite.skips]]` entry is a weakening and a removed one a
+tightening; any change to `[homes]` is a weakening, since it moves where records are read. A
+rule's `since` set for the first time stays a weakening.
 
 The rules that read a project's pages and folders take path patterns:
 
@@ -182,6 +192,7 @@ A pack teaches Themis one field. It can provide these, and a field rarely needs 
 | A pack provides | Where it goes |
 | --- | --- |
 | Its own table in the manifest | `Pack(schema=...)`: unknown keys are refused, as in the core |
+| Which way each key of that table tightens | `Pack(keys=...)`: a dotted key with `*` for any name, and `Key(stricter, default)` |
 | Kinds of work | `Pack(kinds=...)`: each kind, and what it must produce, for `themis describe` |
 | Records | `records.register(kind, schema, home)` |
 | Rules, with their proofs | `@rule(...)` and `@proof(...)`, with `pack=` set to the pack's name |

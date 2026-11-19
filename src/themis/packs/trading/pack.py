@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from themis.pack import Pack, Standard, register
+from themis.pack import Key, Pack, Standard, register
 from themis.packs.trading import data, units
 from themis.schema import ANY, Either, Required
 
@@ -26,6 +26,21 @@ pack = register(Pack(
         "studies": {"*": {"windows": {"*": data.WINDOW}}},  # a study's own windows, keyed by its folder
         "costs": {"*": {"derivation": Required(str), "*": ANY}},
         "tune": {"risk_rules": str, "iterations": int, "confirm_model": str},
+    },
+    # Which way each key tightens, so a change to [trading] is classified. A key named nowhere here
+    # (a window's dates, a cost model's figures) is a weakening when it is added or changed.
+    keys={
+        "work": Key("larger"),  # another study folder is another study checked
+        "windows": Key("larger"),  # a new window adds a check, whatever it holds
+        "windows.*.sealed": Key("higher", False),
+        "windows.*.looks": Key("lower", 1),
+        "studies": Key("larger"),
+        "studies.*.windows": Key("larger"),
+        "studies.*.windows.*.sealed": Key("higher", False),
+        "studies.*.windows.*.looks": Key("lower", 1),
+        "tune.confirm_model": Key(),  # first set turns validity/confirm-on-real-ticks on
+        "tune.risk_rules": Key(),
+        "tune.iterations": Key("lower"),  # a budget
     },
     kinds={
         "strategy": "books trades: the strategy scorecard, the report, an audit",

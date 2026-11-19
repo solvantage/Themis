@@ -363,7 +363,16 @@ GIT_EVENTS = {
     "pre-commit": ("check --changed", "the rules, and the external checks whose paths changed, before each commit"),
     "pre-push": ("check", "every rule and every external check, before each push"),
 }
-_RUNS_THEMIS = re.compile(r"\bthemis\b\S*\s+check\b")  # `themis check`, also as `python -m themis.cli check`
+#: A line that runs Themis: any command that ends in a word holding `themis` (`themis`, `uv run themis`,
+#: `python -m themis.cli`), not a line that only prints the words. What follows it is matched exactly.
+_RUNS_THEMIS = r"^\s*(?!(?:exec\s+)?(?:echo|printf|:|true)\b)(?:exec\s+)?(?:\S+\s+)*?\S*\bthemis\b\S*\s+"
+
+
+def runs_check(text: str, check: str) -> bool:
+    """True when a line of the hook, not a comment, runs exactly `<command> <check>`: `check` for
+    pre-push, `check --changed` for pre-commit. `check --changed` is not the full check."""
+    wanted = re.compile(_RUNS_THEMIS + r"\s+".join(map(re.escape, check.split())) + r"\s*$")
+    return any(wanted.match(line) for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
 def git_hook(command: str, event: str) -> str:
@@ -418,6 +427,6 @@ def git_missing(root: Path, folder: str) -> list[tuple[str, str]]:
             continue
         if not os.access(path, os.X_OK):
             found.append((f"the {event} git hook is not executable, so git skips it", where))
-        if not _RUNS_THEMIS.search(text):
+        if not runs_check(text, check):
             found.append((f"the {event} git hook does not run `themis {check}`", where))
     return found

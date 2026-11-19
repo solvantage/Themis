@@ -61,9 +61,12 @@ def digest_comment(digest: str) -> str:
 
 
 def _units(ctx: Context) -> dict[str, list[str]]:
-    """The units this rule binds: a unit begun before the rule's start date (its `since`) is not held to it."""
+    """The units this rule binds: a unit whose results and report reached the main line before the
+    rule's start date (its `since`) is not held to it. A folder begun earlier still binds a report
+    first made after that date."""
+    made = [pattern for name in ("results", "report", "inputs") for pattern in ctx.param(name) or []]
     try:
-        return ctx.bound(work.units(ctx.all_files, ctx.param("work")))
+        return ctx.bound(work.units(ctx.all_files, ctx.param("work")), made)
     except ValueError as error:
         ctx.refuse(str(error), where="themis.toml", fix="name the unit folders at one depth, such as work/*")
         return {}
@@ -437,6 +440,17 @@ def _(world: World) -> None:
     world.commit("after the rule")
 
 
+@proof("report/exists", "a folder begun before the start date, with results first made after it, is held",
+       expect="fail", contains="holds results but not its report")
+def _(world: World) -> None:
+    world.manifest(EXISTS + SINCE)
+    world.write("work/a/PLAN.md", "the plan, written before the rule\n")
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/metrics.json", METRICS)
+    world.commit("after the rule")
+
+
 @proof("report/generated", "a hand-typed report from before the start date is exempt", expect="pass")
 def _(world: World) -> None:
     world.manifest(GENERATED + SINCE)
@@ -452,6 +466,18 @@ def _(world: World) -> None:
        contains="holds no digest of its inputs")
 def _(world: World) -> None:
     world.manifest(GENERATED + SINCE)
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/metrics.json", METRICS)
+    world.write("work/a/results/report.html", HEADING)
+    world.commit("after the rule")
+
+
+@proof("report/generated", "a folder begun before the start date, with a report typed after it, is held",
+       expect="fail", contains="holds no digest of its inputs")
+def _(world: World) -> None:
+    world.manifest(GENERATED + SINCE)
+    world.write("work/a/PLAN.md", "the plan, written before the rule\n")
     world.commit("before the rule")
     world.on(LATE)
     world.write("work/a/results/metrics.json", METRICS)

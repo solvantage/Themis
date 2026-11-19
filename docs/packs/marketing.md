@@ -304,7 +304,7 @@ These run with no setting from the pack or the project.
 | `decision/enough-evidence` | A retire states that its evidence was enough |
 | `decision/calibrated` | The results gate holds a calibration receipt inside the limits |
 | `attest/bound` | Each attestation holds the hash of the file that was judged; a file changed since is refused |
-| `config/no-silent-weakening` | Any change under `[marketing]` counts as a weakening |
+| `config/no-silent-weakening` | A change under `[marketing]` that loosens a threshold past its default, or whose direction the pack does not state, counts as a weakening |
 
 ### Core rules the pack does not set up
 
@@ -481,8 +481,9 @@ only when the gate does. The command writes `receipts/calibration/marketing-resu
 
 Three things follow from making this a function:
 
-- **The thresholds are sealed.** They sit in the manifest. The core counts any change under
-  `[marketing]` as a weakening, which needs the owner's grant and a reason. A decision made on
+- **The thresholds are sealed.** They sit in the manifest. The core counts a change under
+  `[marketing]` that lowers a minimum below its default, or that it cannot classify, as a
+  weakening, which needs the owner's grant and a reason. A decision made on
   other thresholds fails `results/inputs-rebuilt`.
 - **The owner can still overrule.**
   `themis decide <series> --gate results --by owner --decision keep --verdict pass --reason "..."`
