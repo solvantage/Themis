@@ -230,6 +230,8 @@ BAD_TUNE = {
     "a budget that is not whole": {"budget": 50.5},
     "a holdout written as a word": {"holdout": "passed"},
     "a holdout with no result in it": {"holdout": {}},
+    "a confirming model that is not a name": {"confirm_model": 3},
+    "a confirming model left blank": {"confirm_model": " "},
 }
 BAD = [(gate, base, name, change) for gate, base, cases in (
     (gates.entry, PLANTED_ENTRY, BAD_ENTRY), (gates.signal, PLANTED_SIGNAL, BAD_SIGNAL),
@@ -449,6 +451,12 @@ def test_tune_passes_with_the_holdout_and_is_not_confirmed_without_it() -> None:
     answer = gates.tune(gates.tune_case(holdout=None))
     assert (answer["decision"], answer["verdict"], answer["enough_evidence"]) == ("not-confirmed", "refuse", False)
     assert gates.tune({**gates.tune_case(holdout=None), "holdout": None})["decision"] == "not-confirmed"
+
+
+def test_tune_passes_the_confirming_model_into_its_numbers_as_it_was_given() -> None:
+    answer = gates.tune({**gates.tune_case(), "confirm_model": "Real ticks"})
+    assert (answer["verdict"], answer["numbers"]["confirm_model"]) == ("pass", "Real ticks")
+    assert "confirm_model" not in gates.tune(gates.tune_case())["numbers"]  # left out, it is not made up
 
 
 def test_tune_fails_a_search_that_went_over_its_budget() -> None:

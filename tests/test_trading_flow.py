@@ -176,6 +176,18 @@ def test_noise_is_not_promoted_and_a_kinder_decision_typed_over_it_fails(tmp_pat
     assert verdict(world, "decision/issued-by-gate") is Verdict.FAIL
 
 
+@pytest.mark.parametrize(("used", "expected"), [("Real Ticks", Verdict.PASS), ("open prices only", Verdict.FAIL)])
+def test_a_tune_pass_from_the_gate_carries_its_confirming_model_to_the_validity_rule(
+        tmp_path: Path, used: str, expected: Verdict) -> None:
+    world = study(tmp_path, kind="tune", booked=False)
+    world.manifest(MANIFEST + '\n[trading.tune]\nconfirm_model = "real ticks"\n')
+    world.write("work/a/results/metrics.json", json.dumps({**gates.tune_case(), "confirm_model": used}))
+    assert run(world, "decide", "a", "--gate", "tune") == EXIT_PASS
+    [stored] = [json.loads(path.read_text()) for path in (world.root / "decisions").glob("*.json")]
+    assert (stored["decision"], stored["numbers"]["confirm_model"]) == ("full-pass", used)
+    assert verdict(world, "validity/confirm-on-real-ticks") is expected
+
+
 # -- the sealed window ---------------------------------------------------------------------------
 
 

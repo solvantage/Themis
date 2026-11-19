@@ -157,7 +157,8 @@ What the rules read, in more detail:
   `AUDIT.md` with `status: reproduced` or `differences-explained`, and a `script` in the study
   folder. The script may not be the study's own code and may not import it.
 - **`validity/confirm-on-real-ticks`.** It binds a `tune` study whose decision is a pass: the
-  decision's `numbers.confirm_model` must be the model named under `[trading.tune]`.
+  decision's `numbers.confirm_model` must be the model named under `[trading.tune]`. The `tune`
+  gate copies `confirm_model` from the study's metrics into its numbers, so the metrics name it.
 - **`scorecard/believable`.** The study's README has a heading that holds "How believable is
   this?" with five numbered answers under it: the independent unit, how many were checked, what
   could be missed, whether the sources are independent, and what is unexplained.
