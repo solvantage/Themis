@@ -1,6 +1,6 @@
 # The trading pack
 
-> 2026-11-19. Status: **built**: nineteen rules in six gates. Standard id: `themis-trading/1`.
+> 2026-11-20. Status: **built**: twenty-seven rules in seven gates. Standard id: `themis-trading/1`.
 > `themis describe` lists each rule below and whether its proofs hold.
 
 **In one line:** this pack teaches Themis what evidence means in trading research. A trial is
@@ -121,7 +121,7 @@ A study is one folder. The pack reads these files in it, and these records besid
 
 ## 5. The pack's rules
 
-Nineteen rules in six gates, beside the core's.
+Twenty-seven rules in seven gates, beside the core's.
 
 ### Gate: trials — attempts are counted honestly
 
@@ -171,6 +171,19 @@ Nineteen rules in six gates, beside the core's.
 | Rule | The promise | Parameters |
 | --- | --- | --- |
 | `live/off-by-default` | Every live-trading switch holds its safe value in the source, unless the owner granted that file its flip. | `switches`, `absent` |
+
+### Gate: forward — a live run is held to a replay of the same dates
+
+| Rule | The promise | Parameters |
+| --- | --- | --- |
+| `forward/sealed-before-start` | A forward run's seal reaches the main line before its first live trade. | `margin_hours` |
+| `forward/same-dates-control` | Each week of a forward run has a replay on the same dates, from the same start state, with the same settings. | `fields` |
+| `forward/match` | Each week's share of replay entries that also appear live is counted from the entries and read against the sealed lines. | `floor` |
+| `forward/gap-explained` | The gap between live and replay money is split into its sealed parts, and the remainder is read against its sealed line. | `tolerance` |
+| `forward/conditions-stable` | Every change in trading conditions recorded during a forward run is listed in that week's verdict. | — |
+| `forward/no-retune` | The settings fingerprint stays the same for the whole forward run. | — |
+| `forward/enough-trades` | A forward run gets no pass before its sealed number of trades. | `min_trades` |
+| `forward/risk-line` | A risk number past its sealed line stops a forward run, whatever else passes. | `required` |
 
 ### Core rules the pack configures
 
@@ -241,6 +254,7 @@ computed.
 | `signal` | Do higher values of the signal come before higher values of what follows? | The same two lists with the signal rotated against the forward values, which keeps each list's own stickiness | A rank correlation above zero and above that noise floor, on samples that do not overlap, with the same sign in all but one block. A drift both lists share is taken out first |
 | `entry` | Is an entry or exit better than a dumb entry? | Draws of a dumb entry on the same days, in the same window, on the same side | The trades pay on average after costs; each side pays when two sides are claimed; the mean sits in the top `alpha` of the dumb draws |
 | `tune` | Did a tuned setting earn its confirmation? | Its own stages, in order | The search stayed inside its sealed budget; in-sample, out-of-sample and the walk back over untouched periods all passed; then the sealed window, once |
+| `forward` | Is a live run holding up against its replay, week by week? | Its own sealed lines, read on a replay of the same dates | No risk line passed and no line past its stop, this week's lines inside their pass, every missed or extra entry for a known reason, and the sealed number of trades |
 
 The decisions are `promote`, `kill` and `defer`. The tuning gate says `full-pass`, `kill` and
 `not-confirmed`. Every gate follows the same order:
@@ -289,6 +303,12 @@ Everything here belongs to the project.
 | `validity/power-stated` | `min_power` | The least power a test must have had for its fail to stand |
 | `validity/audit-reproduced` | `forbidden` | Modules no audit script may import |
 | `validity/same-basis` | `fields` | The fingerprint fields every run in a comparison must share, such as `window`, `settings`, `cost_model` or `session` |
+| `forward/sealed-before-start` | `margin_hours` | How many hours before the first live trade the seal must reach the main line; 0 when unset |
+| `forward/same-dates-control` | `fields` | Further fingerprint fields the live week and its replay must both state, with one value |
+| `forward/match` | `floor` | The lowest `pass` a seal may set for `match`; 0 when unset |
+| `forward/gap-explained` | `tolerance` | How far, in money, the parts and the remainder may add up from live less replay; 0.01 when unset |
+| `forward/enough-trades` | `min_trades` | The fewest trades a seal may ask for before any pass; 30 when unset |
+| `forward/risk-line` | `required` | The risk ids every forward seal must draw a line for |
 | `scorecard/explainer` | `max_bytes`, `max_controls` | The caps on the explainer page |
 | `scorecard/believable`, `scorecard/explainer` | `kinds` | The kinds of study the rule binds; every kind when unset |
 | `scorecard/rendering` | `max_chart_bytes` | The cap on one page or picture under `results/` |

@@ -9,7 +9,7 @@ It is a generic core. A field plugs in as a **pack**; a project plugs in as a **
 core names no field and no project, and a test keeps it that way.
 
 **Status:** built. The engine, 50 core rules in 17 gates, the agent and git hooks, guarded
-commands (`themis act`), the pack interface, the trading pack (19 rules in 6 gates), the marketing
+commands (`themis act`), the pack interface, the trading pack (27 rules in 7 gates), the marketing
 content pack (27 rules in 6 gates) and a wrapper for Node check runners all exist,
 and every rule ships proofs that it can fail. What was designed and is not built is listed at the
 end of [DESIGN.md](DESIGN.md) and of each pack's document. Every release, with its commit, its
