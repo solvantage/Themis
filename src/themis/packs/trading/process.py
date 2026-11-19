@@ -145,14 +145,17 @@ def _versions(ctx: Context, path: str, column: str) -> dict[str, int] | None:
       learned="A grid of settings ran with nothing logged, so the best run looked like the only one tried.")
 def settings_counted(ctx: Context) -> None:
     studies, logged = units.studies(ctx), units.trials(ctx)
+    named: dict[str, list[Any]] = {}  # a record may name its study by folder name alone, when no other shares it
+    for name, rows in logged.items():
+        if (found := work.named(studies, name)) is not None:
+            named.setdefault(found, []).extend(rows)
     for unit, files in sorted(studies.items()):
         path = f"{unit}/{ctx.param('history').strip('/')}"
-        if path not in files or _exempt(ctx, unit, files):
+        if path not in files or ctx.predates(work.inside(unit, files, units.SEAL)):  # sealed before since
             continue
         ctx.inspect()
         versions = _versions(ctx, path, ctx.param("settings_column"))
-        folder = unit.rsplit("/", 1)[-1]  # a ledger record may name its study by folder name alone
-        rows = logged.get(unit, []) + (logged.get(folder, []) if folder != unit else [])
+        rows = named.get(unit, [])
         if not rows:
             ctx.breach("this study has a run history and no trial in the ledger", where=path,
                        fix="log the study in the ledger, with the variants it covers, and say why the record is late")
@@ -164,29 +167,16 @@ def settings_counted(ctx: Context) -> None:
                        fix="log each settings version before it runs: raise the trial's variants, or add a trial")
 
 
-def _exempt(ctx: Context, unit: str, files: list[str]) -> bool:
-    """True when the rule binds from a date and this study's seal reached the main line before it.
-
-    This mirrors `_exempt` in gates/order.py: the same seal, read on the same main line, against the
-    same date. One shared helper is to replace both.
-    """
-    if ctx.since is None:
-        return False
-    main = ctx.git.main_ref(ctx.manifest.project.get("main"))
-    arrivals = ctx.git.arrivals(main) if main else {}
-    position = min((arrivals[name] for name in work.inside(unit, files, units.SEAL) if name in arrivals), default=None)
-    if main is None or position is None:
-        return False
-    date = ctx.git.commit_date(ctx.git.main_line(main)[position])
-    return date is not None and date < ctx.since.isoformat()
-
-
 def _history(world: World, runs: str = "s1 s2 s3", trials: tuple[dict[str, Any], ...] = ({"variants": 3},),
-             column: str = "settings_id", since: str | None = None) -> None:
+             column: str = "settings_id", since: str | None = None, other: str | None = None) -> None:
     """A study whose run history holds one run for each settings version named, and its ledger records.
-    With `since`, the study is sealed and merged on the main line first, and the rule binds from that date."""
+    With `since`, the study is sealed and merged on the main line first, and the rule binds from that date.
+    With `other`, work is a list of two globs, and a second study is other/<other>."""
     rule = f'\n    [rules."trials/settings-counted"]\n    since = "{since}"\n' if since else ""
-    world.manifest(SETUP + rule)
+    setup = SETUP.replace('work = "work/*"', 'work = ["work/*", "other/*"]') if other else SETUP
+    world.manifest(setup + rule)
+    if other:
+        world.write(f"other/{other}/PRE-REG.md", "---\nkind: tune\n---\n")
     if since:
         world.write("work/a/PRE-REG.md", "---\nkind: tune\n---\n")
         world.commit("the seal")
@@ -202,6 +192,10 @@ _prove("trials/settings-counted", _history, [
     ("two trials add up, and one states no variants", "pass", None, {"trials": ({"variants": 2}, {"work": "a"})}),
     ("a run with new settings and no trial for it", "fail", "but the ledger counts 2", {"trials": ({"variants": 2},)}),
     ("a trial for another study does not count here", "fail", "no trial in the", {"trials": ({"work": "work/b"},)}),
+    ("work is a list, and a trial names a folder name only this study has", "pass", None,
+     {"trials": ({"work": "a", "variants": 3},), "other": "b"}),
+    ("a trial that names a folder name two studies share counts for neither", "fail", "no trial in the",
+     {"trials": ({"work": "a", "variants": 3},), "other": "a"}),
     ("a run history with no settings column", "refuse", "has no column named settings_id", {"column": "preset"}),
     ("a run history that is not CSV", "refuse", "cannot be read as CSV", {"runs": '"s1'}),
     ("a trial whose variants is not a number", "refuse", "not a whole number", {"trials": ({"variants": "a few"},)}),

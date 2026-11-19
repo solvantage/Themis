@@ -101,3 +101,31 @@ def test_cite_and_run_find_a_unit_under_the_second_pattern(tmp_path: Path, capsy
     assert run(world, "run", "lab/x/runs", "--", sys.executable, "-c", "pass") == EXIT_PASS
     [receipt] = (world.root / "receipts/run").glob("*.json")
     assert json.loads(receipt.read_text())["work"] == "lab/x/runs"
+
+
+TRADING = """
+[project]
+packs = ["trading"]
+
+[trading]
+work = {work}
+"""
+
+
+def test_the_trading_pack_reads_work_as_a_list_and_hands_it_to_the_core_rules(tmp_path: Path) -> None:
+    from themis.packs.trading import data
+    from themis.packs.trading.pack import pack
+
+    world = World(tmp_path / "repo")
+    world.root.mkdir()
+    world.manifest(TRADING.format(work='["research/*", "systems/*/setups/*/tune"]'))
+    world.write("research/r1/PRE-REG.md", "---\nkind: strategy\n---\n")
+    world.write("systems/x/setups/x-daily/tune/PRE-REG.md", "---\nkind: tune\n---\n")
+    world.write("systems/x/README.md", "not a study\n")
+    loaded = manifests.load(world.root)
+    assert loaded.problems == []
+    files = ["research/r1/PRE-REG.md", "systems/x/setups/x-daily/tune/PRE-REG.md", "systems/x/README.md"]
+    assert sorted(data.studies(loaded, files)) == ["research/r1", "systems/x/setups/x-daily/tune"]
+    assert pack.defaults(loaded)["order/sealed-first"]["work"] == ["research/*", "systems/*/setups/*/tune"]
+    world.manifest(TRADING.format(work='["research/*", 3]'))
+    assert any("work" in problem for problem in manifests.load(world.root).problems)

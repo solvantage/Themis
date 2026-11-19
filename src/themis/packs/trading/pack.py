@@ -11,7 +11,7 @@ from typing import Any
 
 from themis.pack import Pack, Standard, register
 from themis.packs.trading import data, units
-from themis.schema import ANY, Required
+from themis.schema import ANY, Either, Required
 
 SEAL, RESULTS = units.SEAL, units.RESULTS
 #: What a study's report page is built from, inside the study. The page carries their digest.
@@ -21,7 +21,7 @@ HOLDOUT = "holdout"  # the guarded action: one look at a sealed data window
 pack = register(Pack(
     name="trading",
     schema={
-        "work": str,  # the folders that each hold one study, such as research/experiments/*
+        "work": Either(str, [str]),  # the folders that each hold one study: one glob, or a list of them
         "windows": {"*": data.WINDOW},
         "studies": {"*": {"windows": {"*": data.WINDOW}}},  # a study's own windows, keyed by its folder
         "costs": {"*": {"derivation": Required(str), "*": ANY}},
