@@ -282,6 +282,17 @@ def _(world):
     world.pull_request("seal", PLAN)
 
 
+@proof("order/unchanged", "a seal merged among commits that add nothing is read at its own merge", expect="pass")
+def _(world):
+    _start(world, SEAL_SETUP)
+    world.write("notes.md", "an edit\n")
+    world.commit("start the notes")
+    world.write("notes.md", "an edit that adds nothing\n")
+    world.commit("edit the notes")
+    world.pull_request("seal", PLAN)
+    world.pull_request("notes", {"notes.md": "another edit\n"})
+
+
 @proof("order/unchanged", "a seal edited afterwards", expect="fail", contains="changed with no amendment record")
 def _(world):
     _start(world, SEAL_SETUP)
