@@ -17,19 +17,24 @@ AGENTS = """
 
 @rule(
     "agents/hooks-installed",
-    "The shipped hooks are present in the host's settings.",
+    "The shipped hooks are present in the host's settings, and the git hooks run Themis when the project declares them.",
     learned="A hook was removed from the settings, and nothing said the guard was gone.",
 )
 def hooks_installed(ctx: Context) -> None:
-    if not ctx.manifest.table("agents").get("host"):
-        ctx.not_configured("name the agent host under [agents]")
-    ctx.inspect()
-    absent = hooks.missing(ctx.root)
-    if absent is None:
-        ctx.refuse("the host's settings file cannot be read", where=hooks.SETTINGS, fix="correct the JSON")
-        return
-    for event in absent:
-        ctx.breach(f"the {event} hook is not installed", where=hooks.SETTINGS, fix="run `themis hooks install`")
+    table = ctx.manifest.table("agents")
+    if not table.get("host") and not table.get("git_hooks"):
+        ctx.not_configured("name the agent host, or the git hooks folder as git_hooks, under [agents]")
+    if table.get("host"):
+        ctx.inspect()
+        absent = hooks.missing(ctx.root)
+        if absent is None:
+            ctx.refuse("the host's settings file cannot be read", where=hooks.SETTINGS, fix="correct the JSON")
+        for event in absent or []:
+            ctx.breach(f"the {event} hook is not installed", where=hooks.SETTINGS, fix="run `themis hooks install`")
+    if table.get("git_hooks"):
+        ctx.inspect()
+        for what, where in hooks.git_missing(ctx.root, table["git_hooks"]):
+            ctx.breach(what, where=where, fix="run `themis hooks install --git`, and commit the hooks")
 
 
 @proof("agents/hooks-installed", "all three hooks installed", expect="pass")
@@ -60,6 +65,65 @@ def _(world):
 def _(world):
     world.manifest(AGENTS)
     world.write(hooks.SETTINGS, '{"permissions": {"deny": ["Tool"]}, "hooks": {"Stop": [{"hooks": []}]}}')
+    hooks.install(world.root, "themis")
+
+
+GIT_HOOKS = """
+    [agents]
+    git_hooks = ".githooks"
+"""
+
+
+def _git_hooks(world, setup: str = GIT_HOOKS) -> None:
+    world.manifest(setup)
+    world.commit("start")
+    hooks.install_git(world.root, ".githooks", "themis")
+
+
+@proof("agents/hooks-installed", "git hooks declared, installed and switched on", expect="pass")
+def _(world):
+    _git_hooks(world)
+
+
+@proof("agents/hooks-installed", "the agent hooks and the git hooks, both in place", expect="pass")
+def _(world):
+    _git_hooks(world, AGENTS + '    git_hooks = ".githooks"\n')
+    hooks.install(world.root, "themis")
+
+
+@proof("agents/hooks-installed", "git hooks declared and never installed", expect="fail",
+       contains="the pre-commit git hook is not installed")
+def _(world):
+    world.manifest(GIT_HOOKS)
+    world.commit("start")
+
+
+@proof("agents/hooks-installed", "git hooks written, but git not pointed at them", expect="fail",
+       contains="git does not run the hooks in .githooks")
+def _(world):
+    _git_hooks(world)
+    world.git("config", "--unset", "core.hooksPath")
+
+
+@proof("agents/hooks-installed", "a git hook that no longer runs Themis", expect="fail",
+       contains="the pre-push git hook does not run `themis check`")
+def _(world):
+    _git_hooks(world)
+    world.write(".githooks/pre-push", "#!/bin/sh\nexit 0\n")
+    (world.root / ".githooks/pre-push").chmod(0o755)
+
+
+@proof("agents/hooks-installed", "a git hook git cannot run", expect="fail", contains="is not executable")
+def _(world):
+    _git_hooks(world)
+    (world.root / ".githooks/pre-commit").chmod(0o644)
+
+
+@proof("agents/hooks-installed", "the agent hooks in place, the declared git hooks missing", expect="fail",
+       contains="the pre-push git hook is not installed")
+def _(world):
+    world.manifest(AGENTS + '    git_hooks = ".githooks"\n')
+    world.commit("start")
     hooks.install(world.root, "themis")
 
 

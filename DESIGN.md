@@ -315,7 +315,7 @@ of date.
 
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
-| `agents/hooks-installed` | The shipped hooks are present in the host's settings. | The host |
+| `agents/hooks-installed` | The shipped hooks are present in the host's settings, and the git hooks run Themis when the project declares them. | The host, or the git hooks folder |
 | `agents/instructions-generated` | The rules section of the agent instructions equals what the rules produce. | The instructions file |
 
 ### Gate: views — a generated page is never typed
@@ -462,7 +462,9 @@ fails a project whose pack falls short.
 
 | Piece | What it does |
 | --- | --- |
-| `themis hooks install` | Writes three hooks into the host's settings, `.claude/settings.json`: before a tool call, session start, and end of turn. |
+| `themis hooks install` | Writes three hooks into the host's settings, `.claude/settings.json`: before a tool call, session start, and end of turn. In a uv project they run `uv run --frozen --quiet themis`, held to the lock file. |
+| Which project | A hook judges the project named by `--root`, else the host's project folder (`$CLAUDE_PROJECT_DIR`), else the nearest folder holding a `themis.toml` at or above the shell's folder. The shell's folder only places a command's relative paths, so a shell outside the project cannot slip a protected edit past it. |
+| `themis hooks install --git [--path .githooks]` | Writes two git hooks, pre-commit (`themis check --changed`) and pre-push (`themis check`), and sets `core.hooksPath` to their folder. It keeps a different hook already there unless given `--force`. Declared as `git_hooks` under `[agents]`, they are checked by `agents/hooks-installed`. |
 | Before a tool call | Stops deletes, remote commands, a forced push, `themis grant`, the owner's own `themis decide` and `themis attest`, and any write to a protected file, for the owner's click. |
 | Session start | Remembers which breaches already exist, so old ones do not block new work. |
 | End of turn | Runs `themis check` against the main line. A new breach keeps the turn open. The host gives it 300 seconds. |
@@ -590,7 +592,7 @@ The full contract, with the pack interface and the pack test kit, is in
 | `themis render [--check]` | Write the generated pages, or fail when one is stale |
 | `themis calibrate` | Measure each gate on noise and on a planted effect; write the receipts |
 | `themis config diff`, `themis config lock` | Show what a change tightens and weakens; refresh the lock |
-| `themis hooks install` | Install the agent hooks |
+| `themis hooks install [--git] [--path DIR] [--force]` | Install the agent hooks; with `--git`, the git hooks (pre-commit, pre-push) and `core.hooksPath` |
 
 **pytest plugin.** It ships in the same distribution. In a project with a `themis.toml`, every
 pytest run ends by writing the suite receipt: what ran, on which exact tree, how it ended, and

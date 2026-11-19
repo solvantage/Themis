@@ -104,7 +104,8 @@ baseline = "own-median"
 ```bash
 uv run themis config lock       # writes themis.lock
 uv run themis hooks install     # writes the hooks into .claude/settings.json
-git add themis.toml themis.lock .claude/settings.json
+uv run themis hooks install --git   # writes .githooks/pre-commit and pre-push, sets core.hooksPath
+git add themis.toml themis.lock .claude/settings.json .githooks
 git commit -m "Themis: manifest, lock and hooks"
 ```
 

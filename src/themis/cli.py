@@ -614,8 +614,21 @@ def command_hooks(args: argparse.Namespace) -> int:
     from themis import hooks
 
     root = Path(args.root).resolve()
-    if _load(root) is None:
+    manifest = _load(root)
+    if manifest is None:
         return EXIT_REFUSE
+    if args.git:
+        folder = args.path or hooks.GIT_HOOKS
+        try:
+            written = hooks.install_git(root, folder, args.run_with, force=args.force)
+        except (ValueError, OSError) as error:
+            _say(f"themis: the git hooks could not be installed: {error}")
+            return EXIT_REFUSE
+        names = ", ".join(path.relative_to(root.resolve()).as_posix() for path in written)
+        print(f"Installed the git hooks: {names}; core.hooksPath is {folder}. Commit them.")
+        if manifest.table("agents").get("git_hooks") != folder:
+            print(f'Declare them under [agents] as git_hooks = "{folder}", so agents/hooks-installed checks them.')
+        return EXIT_PASS
     try:
         path = hooks.install(root, args.run_with)
     except (ValueError, OSError) as error:
@@ -628,6 +641,7 @@ def command_hooks(args: argparse.Namespace) -> int:
 def command_hook(args: argparse.Namespace) -> int:
     """Called by the agent host, with the event as JSON on standard input."""
     import json
+    import os
 
     from themis import hooks
 
@@ -636,7 +650,8 @@ def command_hook(args: argparse.Namespace) -> int:
     except (ValueError, OSError):
         payload = {}
     payload = payload if isinstance(payload, dict) else {}
-    root = Path(payload.get("cwd") or args.root).resolve()
+    # The project is --root, else the host's project folder; the payload's cwd only places relative paths.
+    root = hooks.project_root(args.root, os.environ.get("CLAUDE_PROJECT_DIR"), payload.get("cwd"))
     if args.event == "pretool":
         answer = hooks.pretool(payload, root)
         if answer:
@@ -747,6 +762,9 @@ def command_doctor(args: argparse.Namespace) -> int:
         absent = hooks.missing(root)
         found += ["the host's settings file cannot be read"] if absent is None else [
             f"the {event} hook is not installed: run `themis hooks install`" for event in absent]
+    if manifest.present and not manifest.problems and manifest.table("agents").get("git_hooks") and git.is_repo:
+        found += [f"{what}: run `themis hooks install --git`"
+                  for what, _ in hooks.git_missing(root, manifest.table("agents")["git_hooks"])]
     for line in found:
         print(f" - {line}")
     print("Nothing is wrong with the setup." if not found else f"{len(found)} thing(s) to put right.")
@@ -786,12 +804,18 @@ def build_parser() -> argparse.ArgumentParser:
     config.add_argument("action", choices=["diff", "lock"])
     config.add_argument("--against", help="the commit to compare with (default: the main line)")
 
-    install = add("hooks", command_hooks, "Install the agent hooks into the host's settings.")
+    install = add("hooks", command_hooks, "Install the agent hooks into the host's settings, or with --git the git hooks.")
     install.add_argument("action", choices=["install"])
-    install.add_argument("--run-with", help="how the hooks start themis (default: `uv run --quiet themis` in a uv project)")
+    install.add_argument("--run-with",
+                         help="how the hooks start themis (default: `uv run --frozen --quiet themis` in a uv project)")
+    install.add_argument("--git", action="store_true",
+                         help="write the git hooks (pre-commit: check --changed; pre-push: check) and set core.hooksPath")
+    install.add_argument("--path", help="with --git: the folder for the git hooks (default: .githooks)")
+    install.add_argument("--force", action="store_true", help="with --git: replace a different hook already there")
 
     hook = add("hook", command_hook, "Answer one hook event from the agent host. Not for people.")
     hook.add_argument("event", choices=["pretool", "start", "stop"])
+    hook.set_defaults(root=None)  # unset: the host's project folder, then the payload's folder, decide
 
     render = add("render", command_render, "Write the generated pages from the records and the rules.")
     render.add_argument("--check", action="store_true", help="write nothing; fail when a page is stale")

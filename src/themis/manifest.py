@@ -58,7 +58,7 @@ CORE = {
     "config": {"protected": [str]},
     "checks": {"external": [EXTERNAL]},
     "adapters": {"*": {"*": ANY}},
-    "agents": {"host": Choice("claude"), "instructions": str},
+    "agents": {"host": Choice("claude"), "instructions": str, "git_hooks": str},
 }
 
 
