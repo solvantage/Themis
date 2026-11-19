@@ -7,7 +7,8 @@ Six rules about the numbers a study rests on. Beside the layout in `units.py`, t
     results/metrics.json    `net_of_cost`, which must be true, and `costs_paid`, 0 or more
     AUDIT.md                frontmatter `status` (reproduced, differences-explained or not-yet), `script` (a file
                             in the study folder) and `study_code` (the study's own modules, as a list)
-    a decision record       `numbers.mde` and `numbers.power` on a fail; `numbers.confirm_model` on a tune
+    a decision record       `numbers.mde` and `numbers.power` on a fail but a tune kill; `numbers.confirm_model`
+                            on a tune pass
 """
 
 from __future__ import annotations
@@ -286,6 +287,8 @@ def power_stated(ctx: Context) -> None:
     fix = ('a fail with too little power is recorded with the verdict "refuse" and the decision "defer"; a fail '
            "that stands states numbers.mde, the smallest effect its test could have seen, and numbers.power")
     for unit, found in sorted(units.decisions(ctx).items()):
+        if unit in studies and units.kind(ctx, unit, studies[unit]) == "tune":
+            continue  # a tune kill is a stage outcome, such as a budget spent or a stage failed: no weak test
         for record in found if unit in studies else ():
             ctx.inspect()
             if record.get("verdict") != "fail" or record.get("by") == "owner":
@@ -309,6 +312,19 @@ def _(world: World) -> None:
 @proof("validity/power-stated", "a kill with no power statement", expect="fail", contains="numbers.power is missing")
 def _(world: World) -> None:
     _decided(world, **KILL, numbers={"mde": 0.02})
+
+
+@proof("validity/power-stated", "a tune kill is a stage outcome, not an under-powered test", expect="pass")
+def _(world: World) -> None:
+    _decided(world, "tune", **KILL, numbers={"settings_tried": 51, "budget": 50})
+    _decided(world, name="b", **KILL, numbers={"mde": 0.02, "power": 0.8})
+
+
+@proof("validity/power-stated", "a strategy kill with no power, beside a tune kill", expect="fail",
+       contains="numbers.mde is missing, numbers.power is missing")
+def _(world: World) -> None:
+    _decided(world, "tune", **KILL, numbers={"settings_tried": 51, "budget": 50})
+    _decided(world, name="b", **KILL)
 
 
 @proof("validity/power-stated", "a kill with no smallest effect", expect="fail", contains="numbers.mde is missing")

@@ -152,7 +152,8 @@ What the rules read, in more detail:
   `costs_paid`.
 - **`validity/power-stated`.** A decision that fails must carry `numbers.mde` and
   `numbers.power`, and the power must reach `min_power`. A gate in this pack records a weak "no"
-  as a deferral by itself; this rule catches a kill written any other way.
+  as a deferral by itself; this rule catches a kill written any other way. A `tune` study's kill is
+  not read: a budget spent or a stage failed is a stage outcome, not a test too weak to see.
 - **`validity/audit-reproduced`.** A `strategy` or `signal` study with a decision needs
   `AUDIT.md` with `status: reproduced` or `differences-explained`, and a `script` in the study
   folder. The script may not be the study's own code and may not import it.
