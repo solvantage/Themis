@@ -37,10 +37,49 @@ max_age_days = 30
 | Minimum | Items needed to decide, a required score | Higher |
 | Set that allows | A role's paths, allowed tiers, a closed list | Smaller |
 | Set that requires | Governed documents, protected paths, required fields | Larger |
+| Table of sets | `layout/required-files`'s kinds: a folder pattern and the files it needs | Key by key: a new kind or a new file is a tightening |
 
 A value with no stricter direction, such as a folder name, cannot be classified. Setting it for
 the first time turns a rule on, which is a tightening. Changing it afterwards is treated as a
-weakening, because a path pointed somewhere else can hide what the rule was guarding.
+weakening, because a path pointed somewhere else can hide what the rule was guarding. `work` is a
+set that requires: one pattern or a list, and another pattern added is a tightening.
+
+A rule's parameter is compared with what was in force before it: the value its pack set for it,
+when the project had not stated one. So a stated `work` that replaces the folders a pack set is a
+weakening, not a first setting.
+
+A pack states the direction of each key of its own table with `Pack(keys=...)`: a dotted key,
+`*` for any one name, and a `Key(stricter, default)`. A key it names is compared with its default
+in that direction: a window's `looks` raised above 1 is a weakening. A table of entries whose
+direction is `larger`, such as the windows, gains a check with each new entry, whatever it holds.
+The rest is read by shape. A new table is a tightening, and so is every key inside it, unless a
+named key in it loosens its default. A new list entry is a tightening, and one pattern and a list
+of patterns are the same set. A key added to a table that was already there is a weakening, since
+nothing says which way it moves the checking; so is a removal, and a changed value. Two core
+tables are read their own way: a new `[[suite.skips]]` entry is a weakening and a removed one a
+tightening; any change to `[homes]` is a weakening, since it moves where records are read. A
+rule's `since` set for the first time stays a weakening.
+
+The rules that read a project's pages and folders take path patterns:
+
+```toml
+[rules."layout/required-files"]
+kinds.tool = { folders = "tools/*", files = ["README.md", "*.py"] }    # each tools/ folder holds both
+
+[rules."layout/retired-names"]
+names = ["old-name"]                                                   # in any case, in text or a path
+allow = [{ file = "docs/history.md", line = "Formerly old-name." }]   # the whole line, once
+
+[rules."layout/no-ignored-citations"]
+pages = ["**/*.md"]
+index = ["docs/kept-elsewhere.md"]          # git-ignored paths this tracked page lists may be cited
+
+[rules."views/untouched"]
+pages = ["docs/**/*.md"]                    # pages a generator stamped with a hash
+
+[rules."docs/no-bare-dollar-pairs"]
+pages = ["**/*.md"]
+```
 
 ### Standards
 
@@ -110,7 +149,12 @@ An external check is held to the same laws as a native rule.
   output its declared parser cannot read.
 - **It is proven.** A plant edits a file in a copy of the repository, and the check must then
   fail, with the expected text in its output. That last part is what keeps the proof strict: the check must fail
-  for the planted reason, not for any reason.
+  for the planted reason, not for any reason. A plant does one thing to one file: `append`,
+  `content`, `delete`, or `find` with `replace`. With `stage = true` it also stages that file in
+  the copy, so a check that reads only what is staged (a pre-commit guard) is proven on it.
+- **Its copy holds what git carries.** The copy has the tracked files and the untracked ones that
+  are not ignored, as the working tree holds them, and a git folder of its own. Ignored data, such
+  as a results cache, stays behind, so a large one never slows a proof.
 - **It is protected.** The files named in `command` join the protected paths, so no agent role
   can edit the script that judges its own work.
 - **It is locked.** The command and the hash of its script are part of the configuration hash.
@@ -148,6 +192,7 @@ A pack teaches Themis one field. It can provide these, and a field rarely needs 
 | A pack provides | Where it goes |
 | --- | --- |
 | Its own table in the manifest | `Pack(schema=...)`: unknown keys are refused, as in the core |
+| Which way each key of that table tightens | `Pack(keys=...)`: a dotted key with `*` for any name, and `Key(stricter, default)` |
 | Kinds of work | `Pack(kinds=...)`: each kind, and what it must produce, for `themis describe` |
 | Records | `records.register(kind, schema, home)` |
 | Rules, with their proofs | `@rule(...)` and `@proof(...)`, with `pack=` set to the pack's name |
@@ -155,6 +200,7 @@ A pack teaches Themis one field. It can provide these, and a field rarely needs 
 | Defaults for core rules | `pack.defaults`: a function of the manifest |
 | A report | `pack.report`: what `themis report` calls |
 | The inputs of a gate | `pack.inputs[gate]`: builds what the gate reads from the records, so it is never typed |
+| Records for a guarded action | `pack.actions[action]`: what `themis act` writes before the command starts, such as a look record; it raises ValueError to refuse, and then nothing runs |
 | Standards | `pack.standards[id] = Standard(...)` |
 
 A whole pack, small enough to read at once. It runs as a local pack as it is.
@@ -216,10 +262,24 @@ What a rule may do with `ctx`: read files (`ctx.read`, `ctx.exists`, `ctx.files`
 (`ctx.records`), git history (`ctx.git`), the manifest and its own parameters (`ctx.param`). It
 says what it found with `ctx.inspect()`, `ctx.breach(...)`, `ctx.refuse(...)` and
 `ctx.not_configured(...)`. A rule that inspected nothing is a REFUSE, whatever else it said.
+A rule that binds from a date asks `ctx.predates(files)` (did the first of these files reach the
+main line before its `since`?) or keeps `ctx.bound(units)`, the units that do not predate it; it
+never reads the main line's dates itself.
+
+A pack's own `work` setting, such as `[trading] work`, is one glob or a list of them, as the
+core's is: `Either(str, [str])` in its schema, read with `themis.work.patterns`, with each unit and
+its files found by `themis.work.units`. A record that names a unit by folder name alone is matched
+with `themis.work.named`, which matches only when no other unit shares that folder name.
+
+```toml
+[trading]
+work = ["research/*", "systems/*/setups/*/tune"]    # a study is a folder under either
+```
 
 A proof builds a small repository from scratch in `world`: `write`, `remove`, `move`,
-`manifest`, and git with `commit`, `branch`, `checkout`, `merge` and `pull_request`. The proof
-holds only when the rule reaches the expected verdict, and, with `contains`, for that reason.
+`manifest`, and git with `commit`, `branch`, `checkout`, `merge` and `pull_request`; `on(day)`
+dates the commits that follow, for a proof of `since`. The proof holds only when the rule
+reaches the expected verdict, and, with `contains`, for that reason.
 
 An installed pack is found through a Python entry point named `themis.packs`.
 

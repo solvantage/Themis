@@ -117,12 +117,12 @@ def test_the_gate_decides_and_the_stored_decision_checks_clean(tmp_path: Path, m
     world.write("work/a/PLAN.md", "the plan\n")
     world.write("work/a/results/metrics.json", json.dumps(metrics))
     assert run(world, "decide", "a", "--gate", "threshold") == code
-    stored = json.loads((world.root / "decisions/a.json").read_text())
+    stored = json.loads((world.root / "decisions/work-a.json").read_text())
     assert (stored["decision"], stored["verdict"], stored["gate_version"], stored["work"]) == (decision, verdict, "3", "work/a")
     assert run(world, "check", "decision/issued-by-gate", "decision/enough-evidence") == EXIT_PASS
 
     stored["decision"], stored["verdict"] = "keep", "pass"  # typed by hand, kinder than the gate
-    (world.root / "decisions/a.json").write_text(json.dumps(stored))
+    (world.root / "decisions/work-a.json").write_text(json.dumps(stored))
     world.manifest(MANIFEST + '\n[rules]\n"decision/issued-by-gate" = "enforce"\n')
     expected = EXIT_PASS if verdict == "pass" else EXIT_FAIL
     assert run(world, "check", "decision/issued-by-gate") == expected
@@ -135,7 +135,7 @@ def test_the_owners_own_call_needs_a_reason_and_is_stored_as_the_owners(tmp_path
     assert "--reason" in capsys.readouterr().err
     assert run(world, "decide", "a", "--gate", "threshold", "--by", "owner", "--decision", "keep", "--verdict", "pass",
                "--reason", "kept for a second look") == EXIT_PASS
-    assert json.loads((world.root / "decisions/a.json").read_text())["by"] == "owner"
+    assert json.loads((world.root / "decisions/work-a.json").read_text())["by"] == "owner"
 
 
 def test_an_unknown_gate_or_unit_is_refused(tmp_path: Path) -> None:

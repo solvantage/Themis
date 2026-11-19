@@ -1,7 +1,8 @@
 # The marketing content pack
 
-> 2026-11-16. Status: **built**. Standard id: `themis-marketing/1`. This page says
-> what the code does today. What was designed and is not built is listed in section 12.
+> 2026-11-16. Status: **built**: twenty-seven rules in six gates. Standard id:
+> `themis-marketing/1`. This page says what the code does today. What was designed and is not
+> built is listed in section 12.
 
 **In one line:** this pack teaches Themis what evidence means in marketing content. A fact has a
 dated source. A spend has a tool's receipt. A publish has the owner's grant. Which series leads,
@@ -303,7 +304,7 @@ These run with no setting from the pack or the project.
 | `decision/enough-evidence` | A retire states that its evidence was enough |
 | `decision/calibrated` | The results gate holds a calibration receipt inside the limits |
 | `attest/bound` | Each attestation holds the hash of the file that was judged; a file changed since is refused |
-| `config/no-silent-weakening` | Any change under `[marketing]` counts as a weakening |
+| `config/no-silent-weakening` | A change under `[marketing]` that loosens a threshold past its default, or whose direction the pack does not state, counts as a weakening |
 
 ### Core rules the pack does not set up
 
@@ -412,6 +413,12 @@ the row's judge, on the file the row is judged from. The judge makes it with
 
 ## 8. The results gate
 
+The pack has one gate function.
+
+| Gate | The question | What it must beat | A decision needs |
+| --- | --- | --- | --- |
+| `results` | Should a series lead, be kept or be retired, and does one item stand out? | The project's own median views, and the two series' numbers dealt out again at random | Results read at the agreed age, enough items in each series, and a difference larger than the noise |
+
 The gate turns result records into a decision about one series.
 `themis decide <series> --gate results --rival <other series>` builds the gate's inputs, asks the
 gate, and stores both: the inputs in `decision-inputs/<series>.json` and the decision in
@@ -474,8 +481,9 @@ only when the gate does. The command writes `receipts/calibration/marketing-resu
 
 Three things follow from making this a function:
 
-- **The thresholds are sealed.** They sit in the manifest. The core counts any change under
-  `[marketing]` as a weakening, which needs the owner's grant and a reason. A decision made on
+- **The thresholds are sealed.** They sit in the manifest. The core counts a change under
+  `[marketing]` that lowers a minimum below its default, or that it cannot classify, as a
+  weakening, which needs the owner's grant and a reason. A decision made on
   other thresholds fails `results/inputs-rebuilt`.
 - **The owner can still overrule.**
   `themis decide <series> --gate results --by owner --decision keep --verdict pass --reason "..."`

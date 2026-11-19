@@ -1,13 +1,15 @@
 # Getting started with Themis
 
-> 2026-11-16, for release 0.1.0. Every command and every message quoted here was run against
-> that release.
+> 2026-11-19, for release 0.2.0. Every command and every message quoted here was run against a
+> release: T1–T3 and M1–M3 against 0.1.0, G1 and T4 against 0.2.0. The messages of G1 and T4 are
+> held to what this release prints by `tests/test_onboarding.py`.
 
 Themis checks a repository the way a careful reviewer would, every time, from the files and the
 git history. An AI agent working in the repository cannot quote a number nothing recorded,
 decide a result by typing it, spend past a budget, publish without your yes, or look at sealed
 data unasked. This page sets it up for trading research or for marketing content, and walks
-three cases of each through the whole workflow.
+cases through the whole workflow: a guarded command in any project, four trading cases and three
+content cases.
 
 ## Key features
 
@@ -16,11 +18,13 @@ three cases of each through the whole workflow.
 | Three verdicts | Every rule answers PASS, FAIL or REFUSE. REFUSE means "could not tell", and it is never counted as a pass. Exit codes 0, 1 and 2. |
 | The plan comes first | A plan (a trading `PRE-REG.md`, a content `brief.toml`) must reach `main` in an earlier merge than anything made from it. Checked from git history. |
 | Your yes is a file | Opening sealed data and publishing an item each need your grant, made with `themis grant`. A grant opens one thing, once. |
+| Guarded commands | A command that deletes, spends or looks at sealed data runs through `themis act`: once, on your unspent grant, with a receipt. Its script can refuse to run any other way. |
 | The gate decides | A decision is issued by a gate function from the records. A decision typed by hand fails, and so do inputs typed kinder. Too little evidence is "defer" or "too few", never "no". |
 | No number without a record | A number in a governed page carries a tag naming its record, and must match it. A cost must equal the tools' receipts. |
 | Built, never typed | Reports are built from the records. A page left behind by a later change fails. |
 | Checks that need eyes | A checklist row is ticked only by an attestation from its judge, tied to the hash of the file judged. |
 | Agent hooks | Before a command, the hook stops deletes, force-pushes, grants, the owner's own decisions and attestations, and edits to protected files, and asks you. At the end of each turn, a new failure keeps the turn open. |
+| Git hooks | Before each commit `themis check --changed` runs, and before each push `themis check`, from your own terminal too. |
 | Guarded configuration | Loosening a threshold or switching a rule off fails until you grant it. Tightening is free. |
 | Every guard is proven | Each rule ships cases it must fail on. `themis prove` shows they still fail in your repository. |
 
@@ -104,9 +108,15 @@ baseline = "own-median"
 ```bash
 uv run themis config lock       # writes themis.lock
 uv run themis hooks install     # writes the hooks into .claude/settings.json
-git add themis.toml themis.lock .claude/settings.json
+uv run themis hooks install --git   # writes .githooks/pre-commit and pre-push, sets core.hooksPath
+git add themis.toml themis.lock .claude/settings.json .githooks
 git commit -m "Themis: manifest, lock and hooks"
 ```
+
+The git hooks run `themis check --changed` before each commit and `themis check` before each
+push. Name their folder under `[agents]` as `git_hooks = ".githooks"`, and `agents/hooks-installed`
+fails when one goes missing or no longer runs Themis. A different hook already in that folder is
+kept unless you add `--force`.
 
 **4. Look before you enforce.** Every rule starts at `warn`: it runs and reports, and blocks
 nothing.
@@ -155,7 +165,8 @@ what each one is missing.
 | Seal the plan | Merge `PRE-REG.md` in its own pull request | Merge `brief.toml`, with `evidence.toml` and `checklist.toml`, in its own pull request |
 | Do | `themis run <study> --input <data file> -- <your command>` | Write `plan.toml` with its estimate; make the assets; the tools write spend receipts |
 | Check | A second script reproduces the numbers | Each checklist row's judge runs `themis attest <file> <row> --judge <judge> --by <who>` |
-| Approve | `themis grant holdout <window>`, by you, to look at sealed data | `themis grant publish <item>`, by you; `post.toml` names the grant |
+| Approve | `themis grant holdout <study>/<window>`, by you, to look at sealed data | `themis grant publish <item>`, by you; `post.toml` names the grant |
+| Run what the grant opens | `themis act holdout <study>/<window> -- <command>`, when the look is made by a program outside Python | `themis act <action> <target> -- <command>` for any guarded command of your own |
 | Decide | `themis decide <study> --gate entry` | `themis decide <series> --gate results --rival <other series>` |
 | Report | `themis report <study>` | `themis report <item>` |
 | Hand off | `themis checkpoint` | The same |
@@ -170,11 +181,45 @@ page, or a report edited after the fact all fail `themis check`.
 | Before every command or file write by the agent | The hook: stops deletes, force-pushes, `themis grant`, the owner's own `themis decide` and `themis attest`, and edits to protected files, and asks you |
 | At the end of every agent turn | `themis check`: a new failure of an enforced rule keeps the turn open, at most three times |
 | Every pytest run | A receipt of what ran, on which exact tree |
+| Every commit and push, from any terminal | The git hooks: `themis check --changed` before a commit, `themis check` before a push |
 
-What does not run by itself: anything outside an agent session. A push from your own terminal is
-not checked unless your pre-push script runs `uv run themis check`. Add it there.
+What does not run by itself: a guarded script started by hand. Themis cannot see a delete or a
+spend inside a script, so the script asks `themis act --verify` first and stops when it is not
+running under `themis act` (G1).
 
-## Trading: three cases, start to finish
+## Any project: a guarded command
+
+A command that cannot be taken back, such as a publish, a delete or a spend, is named in
+`grant/required`'s `guarded` list. It then runs only through `themis act`, on your unspent
+grant. The command's own script asks `themis act --verify <action> <target>` first, so running
+it by hand does nothing.
+
+```toml
+[rules."grant/required"]
+level = "enforce"
+guarded = ["publish"]      # a trading project keeps "holdout" in its list too
+```
+
+### G1. A command that runs once, on your grant
+
+A docs site whose `scripts/publish.py` begins by asking `themis act --verify publish <target>`.
+
+| Step | What happens | What Themis says |
+| --- | --- | --- |
+| Run it by hand | The agent runs `python scripts/publish.py site` | `there is no THEMIS_ACT_TOKEN, so this is not running inside` act, and the script stops |
+| Run it, no grant | `themis act publish site -- python scripts/publish.py site` | `there is no unspent grant for publish on site, so the command did not run` (REFUSE) |
+| Self-approve | The agent runs `themis grant publish site` | `Only the owner gives a grant. The owner's approval is needed.` |
+| Approve | You run `themis grant publish site --reason "..."` | `Commit it: a grant is visible in review, and is used once.` |
+| Run | The agent runs the same `themis act` | `the command exited 0. The grant is spent` |
+| Run again | And again | `there is no unspent grant for publish on site` |
+| Check | `grant/required` and `grant/single-use` | Both pass |
+| A receipt by hand | The agent writes an action receipt itself | `the guarded action publish ran on site with no grant` |
+
+The hook does not stop `themis act`: the agent runs it, and your click stays on `themis grant`.
+The action receipt in `receipts/action/` names the grant, the command, the hash of the token the
+command was given, and how it exited.
+
+## Trading: four cases, start to finish
 
 ### T1. An honest study
 
@@ -232,6 +277,89 @@ start, end = data.window(Path("."), manifest.load(Path(".")), "holdout",
 The trading gates say yes to pure noise about one time in twenty, which is the false-alarm rate
 they are built to. Themis makes sure the decision is the gate's; it cannot make a gate stronger
 than its own error rate.
+
+### T4. A strategy tuned in an outside tester
+
+The strategy runs in a tester Themis knows nothing about. Each run the tester makes is a row of
+the study's `results/run-history.csv`, with the id of the settings it used; a script of the
+project's turns the tester's own output into that file, the metrics and the trade table. The
+study is a `tune` study, and the project names the most faithful model a confirming run can use:
+
+```toml
+[trading]
+work = "tuning/*"
+
+[trading.windows.in-sample]
+from = "2018-01-01"
+to = "2022-12-31"
+
+[trading.windows.out-of-sample]
+from = "2023-01-01"
+to = "2024-06-30"
+
+[trading.tune]
+confirm_model = "every tick"
+
+[rules]
+"prereg/declared" = "enforce"
+"trials/settings-counted" = "enforce"
+"holdout/guarded" = "enforce"
+"holdout/one-signal-look" = "enforce"
+"grant/required" = "enforce"
+"grant/single-use" = "enforce"
+"validity/confirm-on-real-ticks" = "enforce"
+"decision/issued-by-gate" = "enforce"
+
+[rules."scorecard/believable"]
+kinds = ["strategy", "signal"]      # a tune study ships no README of its own
+
+[rules."scorecard/explainer"]
+kinds = ["strategy", "signal"]
+```
+
+The seal names the study's kind and gate, the windows it reads (one of them its own, sealed),
+how many settings the search may try, and the risk rules each stage is judged under:
+
+```markdown
+---
+kind: tune
+windows: [in-sample, out-of-sample, unseen]
+window-unseen: {from = "2024-07-01", to = "2025-12-31", sealed = true}
+gate: tune
+iterations: 40
+risk_rules: rules/risk.json
+---
+```
+
+| Step | What happens | What Themis says |
+| --- | --- | --- |
+| Log | `themis new breakout --question "..."` | `Seal its plan before anything runs.` |
+| Seal | `PRE-REG.md`, as above, merged in a pull request of its own | `prereg/declared` passes |
+| Map | The trial's `variants` is raised to 8, then `themis run <study> --input <data> -- <tester>` maps 8 settings in-sample | `the command exited 0`, with a run receipt and the provenance file |
+| Screen and tune | `variants` raised to 12 before 4 more settings run inside the region that held; the tester writes what in-sample, out-of-sample and the walk back found | `trials/settings-counted` passes: 12 settings versions, 12 counted |
+| Look, too early | `themis act holdout <study>/unseen -- <tester> confirm` | `there is no unspent grant for holdout on <study>/unseen, so the command did not run` (REFUSE); the tester never starts |
+| Self-approve | The agent runs `themis grant holdout <study>/unseen` | `Only the owner gives a grant. The owner's approval is needed.` |
+| Approve | You run `themis grant holdout <study>/unseen --reason "..."` | `Commit it: a grant is visible in review, and is used once.` |
+| Holdout, once | The agent runs the same `themis act`. The confirming run uses the model named under `[trading.tune]` and writes `confirm_model` into the metrics | `Wrote looks/`, then `The grant is spent` |
+| Decide | `themis decide <study> --gate tune` | `full-pass. the setting passed every stage, the holdout included` |
+| Report | The confirming run's deals, turned into the standard trade table with `trades.from_rows`; then `themis report <study>` | Writes `results/scorecard.csv` and `results/report.html` |
+| Hand off | `themis check` | PASS: the study's grant, look, count, confirming model and decision all hold |
+
+The `tune` gate reads outcomes, not prices: whether each stage paid under the risk rules is
+decided inside that stage. So the rules around it carry the weight, and the corners an agent cuts
+are each caught by one of them:
+
+| Corner cut | What the agent does | What Themis says |
+| --- | --- | --- |
+| A setting left uncounted | Runs a thirteenth settings version before raising `variants` | `the run history holds 13 settings versions, but the ledger counts 12 for this study` |
+| The holdout read by hand | Starts the confirming run itself, outside `themis act` | `there is no THEMIS_ACT_TOKEN, so this is not running inside`, and the script stops |
+| A cheaper confirm | Confirms on a coarser model; the gate still says full-pass | `the confirming run did not use the model this project named, "every tick": numbers.confirm_model is "open prices"` |
+| A second look, same grant | Runs the confirming `themis act` again | `there is no unspent grant for holdout on <study>/unseen` |
+| A second look, new grant | You grant once more, and it looks again | `this is signal look number 2 at the sealed window unseen, which allows 1` |
+
+`<study>` is the folder `themis new` made, such as `tuning/2026-11-19_breakout`. Sibling studies
+that tune the same strategy on the same unseen dates declare the same window id, and their looks
+count together.
 
 ## Marketing content: three cases, start to finish
 

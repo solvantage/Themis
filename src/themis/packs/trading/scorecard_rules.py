@@ -4,7 +4,11 @@ Four rules about what a study publishes beside its numbers: the scorecard and it
 answers about how far the result can be believed, one short page that explains it, and pages that
 render as they were written.
 
-A study is "published" here once it has anything under `results/`.
+A study is "published" here once it has anything under `results/`. `scorecard/believable` and
+`scorecard/explainer` take the kinds of study they bind (`kinds`, every kind when unset). All four
+honour `since`: a study whose seal reached the main line before that date is left alone.
+`scorecard/rendering` reads a study's pages with the core's Markdown reader, the one
+`docs/no-bare-dollar-pairs` uses, so a sign in code, HTML or a link target is never counted.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from themis import work
+from themis import markdown, work
 from themis.packs.trading import scorecard, units
 from themis.rule import Context, Param, proof, rule
 
@@ -40,13 +44,35 @@ _BOX = re.compile(r"""class\s*=\s*(["'])(?:[^"']*\s)?how-to-read(?:\s[^"']*)?\1"
 _CONTROL = re.compile(r"<(?:input|button|select)\b", re.IGNORECASE)
 _NO_EXPLAINER = re.compile(r"^[ \t]*explainer:[ \t]*none\b(.*)$", re.IGNORECASE | re.MULTILINE)
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9'-]*")
-_CODE_SPAN = re.compile(r"(`+).*?\1")
-_BARE_DOLLAR = re.compile(r"(?<!\\)\$")
+
+
+KINDS = Param("kinds", [str], list(units.KINDS), "larger",
+              "the kinds of study the rule binds, such as strategy; every kind when unset")
 
 
 def _published(ctx: Context) -> list[tuple[str, list[str]]]:
     """The studies that have results, in order."""
     return [(unit, files) for unit, files in sorted(units.studies(ctx).items()) if units.has_results(unit, files)]
+
+
+def _sealed_before(ctx: Context, unit: str, files: list[str]) -> bool:
+    """True when the study's seal reached the main line before the rule's start date (its `since`)."""
+    return ctx.predates(work.inside(unit, files, units.SEAL))
+
+
+def _bound(ctx: Context) -> list[tuple[str, list[str]]]:
+    """The published studies this rule binds: of a kind it names, and not sealed before its date.
+    A study whose kind cannot be read is bound, so a missing kind never excuses it."""
+    wanted = ctx.param("kinds")
+    unknown = sorted(set(wanted) - set(units.KINDS))
+    if unknown:
+        ctx.refuse(f"kinds names {', '.join(unknown)}, which is not a kind of study", where="themis.toml",
+                   fix=f"name kinds from: {', '.join(units.KINDS)}")
+        return []
+    every = set(units.KINDS) <= set(wanted)
+    return [(unit, files) for unit, files in _published(ctx)
+            if (every or units.kind(ctx, unit, files) in (None, *wanted))
+            and not _sealed_before(ctx, unit, files)]
 
 
 def _study(world: World, kind: str = "strategy", seal: str = "", manifest: str = "") -> None:
@@ -67,6 +93,8 @@ def _study(world: World, kind: str = "strategy", seal: str = "", manifest: str =
 )
 def complete(ctx: Context) -> None:
     for unit, files in _published(ctx):
+        if _sealed_before(ctx, unit, files):
+            continue
         sealed = units.seal(ctx, unit, files)
         if sealed is None or sealed[1].get("kind") not in SCORED:
             continue
@@ -170,6 +198,30 @@ def _(world: World) -> None:
     _study(world, kind="data")
 
 
+def _shipped_early(world: World, since: str, card: str | None = None) -> None:
+    """A study sealed and merged to main, then shipped with this scorecard, under the rule's start date."""
+    world.manifest(MANIFEST + f'\n[rules."scorecard/complete"]\nsince = "{since}"\n')
+    world.write(f"{STUDY}/PRE-REG.md", "---\nkind: strategy\n---\nThe plan.\n")
+    world.commit("the seal, before the rule binds")
+    world.write(f"{STUDY}/results/metrics.json", "{}\n")
+    world.write(f"{STUDY}/{units.SCORECARD}", _card() if card is None else card)
+    world.write("work/b/PRE-REG.md", "---\nkind: strategy\n---\nThe plan.\n")  # a study sealed later, shipped whole
+    world.write("work/b/results/metrics.json", "{}\n")
+    world.write(f"work/b/{units.SCORECARD}", _card())
+    world.write(f"work/b/{units.REPORT}", "<h1>The report</h1>\n")
+
+
+@proof("scorecard/complete", "a study sealed before the rule binds is left alone", expect="pass")
+def _(world: World) -> None:
+    _shipped_early(world, "2027-01-01")
+
+
+@proof("scorecard/complete", "a study sealed on the day the rule binds is held to it", expect="fail",
+       contains="this study has results and no report")
+def _(world: World) -> None:
+    _shipped_early(world, "2026-01-01")
+
+
 # -- scorecard/believable -----------------------------------------------------------------------
 
 
@@ -196,12 +248,13 @@ def _answers(text: str) -> int | None:
     "scorecard/believable",
     "A published result answers five questions about how far it can be believed.",
     pack="trading",
+    params=(KINDS,),
     learned="A finding was quoted for weeks before anyone asked how many independent cases it rested on.",
 )
 def believable(ctx: Context) -> None:
     fix = (f'add a heading "{QUESTION}" and answer under it, in a numbered list: what the independent unit is; '
            "how many were checked; what could be missed; whether the sources are independent; what is unexplained")
-    for unit, _ in _published(ctx):
+    for unit, _ in _bound(ctx):
         ctx.inspect()
         path = f"{unit}/{units.README}"
         text = ctx.read(path)
@@ -282,6 +335,55 @@ def _(world: World) -> None:
     world.remove(f"{STUDY}/results/metrics.json")
 
 
+def _scoped(world: World, rule_id: str, setting: str, *studies: tuple[str, str, str | None]) -> None:
+    """Studies with results, each (folder, kind, README or None), under one setting of the rule."""
+    world.manifest(MANIFEST + f'\n[rules."{rule_id}"]\n{setting}\n')
+    for unit, kind, readme in studies:
+        world.write(f"{unit}/PRE-REG.md", f"---\nkind: {kind}\n---\nThe plan.\n")
+        world.write(f"{unit}/results/metrics.json", "{}\n")
+        if readme is not None:
+            world.write(f"{unit}/README.md", readme)
+
+
+def _sealed_early(world: World, rule_id: str, since: str, readme: str) -> None:
+    """Study a, merged to main with no README; study b, not merged yet, with this README."""
+    _scoped(world, rule_id, f'since = "{since}"', (STUDY, "strategy", None))
+    world.commit("study a, before the rule binds")
+    _scoped(world, rule_id, f'since = "{since}"', ("work/b", "signal", readme))
+
+
+ANSWERED = f"## {QUESTION}\n\n{FIVE}"
+
+
+@proof("scorecard/believable", "scoped to strategy and signal, a tune study owes no answers", expect="pass")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/believable", 'kinds = ["strategy", "signal"]',
+            (STUDY, "strategy", ANSWERED), ("work/b", "tune", None))
+
+
+@proof("scorecard/believable", "scoped to strategy and signal, a signal study still owes them", expect="fail",
+       contains="this study has results and no README.md")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/believable", 'kinds = ["strategy", "signal"]',
+            (STUDY, "tune", None), ("work/b", "signal", None))
+
+
+@proof("scorecard/believable", "a kind that does not exist", expect="refuse", contains="kinds names stratgy, which")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/believable", 'kinds = ["stratgy"]', (STUDY, "strategy", ANSWERED))
+
+
+@proof("scorecard/believable", "a study sealed before the rule binds is left alone", expect="pass")
+def _(world: World) -> None:
+    _sealed_early(world, "scorecard/believable", "2027-01-01", ANSWERED)
+
+
+@proof("scorecard/believable", "a study sealed on the day the rule binds is held to it", expect="fail",
+       contains="this study has results and no README.md")
+def _(world: World) -> None:
+    _sealed_early(world, "scorecard/believable", "2026-01-01", ANSWERED)
+
+
 # -- scorecard/explainer ------------------------------------------------------------------------
 
 
@@ -292,11 +394,12 @@ def _(world: World) -> None:
     params=(
         Param("max_bytes", int, 200000, "lower", "the most bytes the explainer page may hold"),
         Param("max_controls", int, 2, "lower", "the most controls (inputs, buttons, selects) the explainer may hold"),
+        KINDS,
     ),
     learned="A result was explained by a page of sliders that no newcomer could follow.",
 )
 def explainer(ctx: Context) -> None:
-    for unit, _ in _published(ctx):
+    for unit, _ in _bound(ctx):
         ctx.inspect()
         path = f"{unit}/{EXPLAINER}"
         if not ctx.exists(path):
@@ -400,21 +503,39 @@ def _(world: World) -> None:
     world.remove(f"{STUDY}/results/metrics.json")
 
 
+NO_PAGE = "explainer: none - the result is one table of numbers\n"
+
+
+@proof("scorecard/explainer", "scoped to strategy and signal, a tune study owes no page", expect="pass")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/explainer", 'kinds = ["strategy", "signal"]',
+            (STUDY, "strategy", NO_PAGE), ("work/b", "tune", None))
+
+
+@proof("scorecard/explainer", "scoped to strategy and signal, a signal study still owes one", expect="fail",
+       contains="no explainer page")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/explainer", 'kinds = ["strategy", "signal"]',
+            (STUDY, "tune", None), ("work/b", "signal", None))
+
+
+@proof("scorecard/explainer", "a kind that does not exist", expect="refuse", contains="kinds names stratgy, which")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/explainer", 'kinds = ["stratgy"]', (STUDY, "strategy", NO_PAGE))
+
+
+@proof("scorecard/explainer", "a study sealed before the rule binds is left alone", expect="pass")
+def _(world: World) -> None:
+    _sealed_early(world, "scorecard/explainer", "2027-01-01", NO_PAGE)
+
+
+@proof("scorecard/explainer", "a study sealed on the day the rule binds is held to it", expect="fail",
+       contains="no explainer page")
+def _(world: World) -> None:
+    _sealed_early(world, "scorecard/explainer", "2026-01-01", NO_PAGE)
+
+
 # -- scorecard/rendering ------------------------------------------------------------------------
-
-
-def _dollar_lines(text: str) -> list[tuple[int, int]]:
-    """Each line that holds two or more bare dollar signs, as (line number, how many). A sign
-    after a backslash, in a code span or in a fenced block is not bare."""
-    found, fenced = [], False
-    for number, line in enumerate(text.splitlines(), start=1):
-        if line.lstrip().startswith(_FENCE):
-            fenced = not fenced
-            continue
-        count = 0 if fenced else len(_BARE_DOLLAR.findall(_CODE_SPAN.sub("", line)))
-        if count >= 2:
-            found.append((number, count))
-    return found
 
 
 @rule(
@@ -427,6 +548,8 @@ def _dollar_lines(text: str) -> list[tuple[int, int]]:
 )
 def rendering(ctx: Context) -> None:
     for unit, files in sorted(units.studies(ctx).items()):
+        if _sealed_before(ctx, unit, files):
+            continue
         for path in files:
             if not path.lower().endswith(".md"):
                 continue
@@ -435,9 +558,9 @@ def rendering(ctx: Context) -> None:
             if text is None:
                 ctx.refuse("this markdown file cannot be read as text", where=path)
                 continue
-            for number, count in _dollar_lines(text):
-                ctx.breach(f"this line holds {count} bare dollar signs, so the words between them are read as "
-                           "mathematics and vanish", where=path, line=number,
+            for number, line in markdown.dollar_lines(text):  # the core reader: prose only, as CommonMark reads it
+                ctx.breach(f"this line holds {len(markdown.bare_dollars(line))} bare dollar signs, so the words "
+                           "between them are read as mathematics and vanish", where=path, line=number,
                            fix="write each sign as \\$, put the amounts in code spans, or keep one sign to a line")
         for path in work.inside(unit, files, ["results/**/*.html", "results/**/*.svg", "results/**/*.png"]):
             ctx.inspect()
@@ -459,6 +582,26 @@ The cost was `$3` on a `$100` stake.
 fee = $1 + $2
 ```
 """
+
+
+def _rendered_early(world: World, since: str) -> None:
+    """A study sealed and merged to main, whose README later puts two bare signs on one line."""
+    world.manifest(MANIFEST + f'\n[rules."scorecard/rendering"]\nsince = "{since}"\n')
+    world.write(f"{STUDY}/PRE-REG.md", "---\nkind: strategy\n---\nThe plan.\n")
+    world.commit("the seal, before the rule binds")
+    world.write(f"{STUDY}/README.md", "It made $12 on a $100 stake.\n")
+    world.write("work/b/README.md", "It made \\$12 on a \\$100 stake.\n")  # a study sealed later, written well
+
+
+@proof("scorecard/rendering", "a study sealed before the rule binds is left alone", expect="pass")
+def _(world: World) -> None:
+    _rendered_early(world, "2027-01-01")
+
+
+@proof("scorecard/rendering", "a study sealed on the day the rule binds is held to it", expect="fail",
+       contains="2 bare dollar signs")
+def _(world: World) -> None:
+    _rendered_early(world, "2026-01-01")
 
 
 @proof("scorecard/rendering", "one sign to a line, escaped signs, code spans and a code block", expect="pass")
@@ -485,6 +628,19 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     _study(world)
     world.write(f"{STUDY}/notes/costs.md", "The fee is \\$1, the spread $2 and the swap $3.\n")
+
+
+@proof("scorecard/rendering", "pairs in an HTML block and in a diagram are not prose", expect="pass")
+def _(world: World) -> None:
+    _study(world)
+    world.write(f"{STUDY}/README.md", '<div>\n$1 and $2\n</div>\n\n~~~mermaid\nA["$1"] --> B["$2"]\n~~~\n')
+
+
+@proof("scorecard/rendering", "a shorter fence inside a long one does not close it", expect="fail",
+       contains="holds 2 bare dollar signs")
+def _(world: World) -> None:
+    _study(world)
+    world.write(f"{STUDY}/README.md", "````md\n```\n````\nIt made $12 on a $100 stake.\n")
 
 
 @proof("scorecard/rendering", "a picture over the project's cap", expect="fail", contains="over the cap of 200")

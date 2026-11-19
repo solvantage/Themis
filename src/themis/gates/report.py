@@ -61,8 +61,12 @@ def digest_comment(digest: str) -> str:
 
 
 def _units(ctx: Context) -> dict[str, list[str]]:
+    """The units this rule binds: a unit whose results and report reached the main line before the
+    rule's start date (its `since`) is not held to it. A folder begun earlier still binds a report
+    first made after that date."""
+    made = [pattern for name in ("results", "report", "inputs") for pattern in ctx.param(name) or []]
     try:
-        return work.units(ctx.all_files, ctx.param("work"))
+        return ctx.bound(work.units(ctx.all_files, ctx.param("work")), made)
     except ValueError as error:
         ctx.refuse(str(error), where="themis.toml", fix="name the unit folders at one depth, such as work/*")
         return {}
@@ -407,3 +411,95 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     _page(world)
     (world.root / "work/a/results/report.html").write_bytes(b"\xff\xfe\x00\x01")
+
+
+# -- a start date: work begun before it is not held to these rules -----------------------------
+
+SINCE = '    since = "2026-06-01"\n'
+LATE = "2026-07-01"
+
+
+@proof("report/exists", "a unit from before the start date needs no report; a later one has its own", expect="pass")
+def _(world: World) -> None:
+    world.manifest(EXISTS + SINCE)
+    world.write("work/old/results/metrics.json", METRICS)
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/metrics.json", METRICS)
+    world.write("work/a/results/report.html", HEADING)
+    world.commit("after the rule")
+
+
+@proof("report/exists", "a unit begun after the start date is still held to it", expect="fail",
+       contains="holds results but not its report")
+def _(world: World) -> None:
+    world.manifest(EXISTS + SINCE)
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/metrics.json", METRICS)
+    world.commit("after the rule")
+
+
+@proof("report/exists", "a folder begun before the start date, with results first made after it, is held",
+       expect="fail", contains="holds results but not its report")
+def _(world: World) -> None:
+    world.manifest(EXISTS + SINCE)
+    world.write("work/a/PLAN.md", "the plan, written before the rule\n")
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/metrics.json", METRICS)
+    world.commit("after the rule")
+
+
+@proof("report/generated", "a hand-typed report from before the start date is exempt", expect="pass")
+def _(world: World) -> None:
+    world.manifest(GENERATED + SINCE)
+    world.write("work/old/results/metrics.json", METRICS)
+    world.write("work/old/results/report.html", HEADING)
+    world.commit("before the rule")
+    world.on(LATE)
+    _built(world, GENERATED + SINCE)
+    world.commit("after the rule")
+
+
+@proof("report/generated", "a hand-typed report begun after the start date is still held", expect="fail",
+       contains="holds no digest of its inputs")
+def _(world: World) -> None:
+    world.manifest(GENERATED + SINCE)
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/metrics.json", METRICS)
+    world.write("work/a/results/report.html", HEADING)
+    world.commit("after the rule")
+
+
+@proof("report/generated", "a folder begun before the start date, with a report typed after it, is held",
+       expect="fail", contains="holds no digest of its inputs")
+def _(world: World) -> None:
+    world.manifest(GENERATED + SINCE)
+    world.write("work/a/PLAN.md", "the plan, written before the rule\n")
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/metrics.json", METRICS)
+    world.write("work/a/results/report.html", HEADING)
+    world.commit("after the rule")
+
+
+@proof("report/readable", "a report from before the start date is exempt; a later one reads well", expect="pass")
+def _(world: World) -> None:
+    world.manifest(READABLE.replace('report = ["results/report.html"]\n', 'report = ["results/report.html"]\n' + SINCE))
+    world.write("work/old/results/report.html", PAGE.replace('class="how-to-read"', 'class="note"'))
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/report.html", PAGE)
+    world.commit("after the rule")
+
+
+@proof("report/readable", "a report begun after the start date is still held", expect="fail",
+       contains="fewer how-to-read boxes than charts")
+def _(world: World) -> None:
+    world.manifest(READABLE.replace('report = ["results/report.html"]\n', 'report = ["results/report.html"]\n' + SINCE))
+    world.commit("before the rule")
+    world.on(LATE)
+    world.write("work/a/results/report.html", PAGE.replace('class="how-to-read"', 'class="note"'))
+    world.commit("after the rule")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import json
+import posixpath
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
@@ -29,7 +30,8 @@ METRICS = Param("metrics", str, "results/metrics.json", None, "the metrics file,
 PROVENANCE = Param("provenance", str, "results/provenance.json", None, "the fingerprint file, inside a unit")
 SECTIONS = Param("sections", [str], None, "larger", "heading texts; when set, only the lines under them are governed")
 
-FIX_RECORD = "cite a unit by its folder name and a key its metrics file holds, or run the work so it writes them"
+FIX_RECORD = ("cite a unit by its folder name, or by its whole path when units share that name, and a key its "
+              "metrics file holds, or run the work so it writes them")
 FIX_DECISION = "issue the decision with its gate, or correct the work the tag names"
 
 
@@ -44,13 +46,31 @@ def _documents(ctx: Context) -> Iterator[tuple[str, str]]:
             yield name, text
 
 
-def _units(ctx: Context) -> dict[str, str] | None:
-    """Folder name -> unit folder, or None after a refusal that says why the units cannot be listed."""
+def _units(ctx: Context) -> claims.UnitNames | None:
+    """Each name a tag may use for a unit, or None after a refusal that says why the units cannot be listed."""
     try:
         return claims.unit_names(work.units(ctx.all_files, ctx.param("work")))
     except ValueError as error:
-        ctx.refuse(str(error), where="themis.toml", fix="name the unit folders with one pattern, such as work/*")
+        ctx.refuse(str(error), where="themis.toml",
+                   fix="name the unit folders at one depth, with one pattern or a list of them, such as work/*")
         return None
+
+
+def _predating(ctx: Context) -> set[str]:
+    """The names of the units whose results reached the main line before the rule's start date (its
+    `since`): the files in the folder that holds the metrics file or the fingerprint. A tag that
+    cites one of them is not checked: a record older than the rule is not held to it. A folder
+    begun earlier still binds results first made after that date."""
+    if ctx.since is None:
+        return set()
+    try:
+        found = work.units(ctx.all_files, ctx.param("work"))
+    except ValueError:
+        return set()  # _units has already said why
+    held = [inner.strip("/") for inner in (ctx.param("metrics"), ctx.param("provenance")) if inner]
+    results = [f"{posixpath.dirname(inner)}/**" if "/" in inner else inner for inner in held]
+    old = {unit for unit, files in found.items() if ctx.predates(work.inside(unit, files, results))}
+    return {name for name, unit in claims.unit_names(found).items() if unit in old}
 
 
 # -- claims/receipt -----------------------------------------------------------------------------
@@ -67,6 +87,7 @@ def receipt(ctx: Context) -> None:
     units = _units(ctx)
     if units is None:
         return
+    old = _predating(ctx)
     for path, text in _documents(ctx):
         lines = claims.governed_lines(text, ctx.param("sections"))
         if not lines:
@@ -77,7 +98,7 @@ def receipt(ctx: Context) -> None:
                 ctx.breach(f"the number {number} cites no record", where=path, line=line,
                            fix="paste the number with its tag, as `themis cite` prints it, or take the number out")
         for tag in claims.find_tags(text):
-            if tag.line not in lines:
+            if tag.line not in lines or tag.work in old:
                 continue
             cited = f"{tag.work}#{tag.key}"
             if tag.number is None:
@@ -208,6 +229,34 @@ def _(world: World) -> None:
     _world(world, "claims/receipt", ONE.replace("open-drive", "open-drvie"))
 
 
+TUNES = 'work = ["setups/*/tune", "work/*"]'
+
+
+def _tunes(world: World, rule_id: str, text: str) -> None:
+    """Two setups whose work each lives in a folder named tune, beside the report's own unit."""
+    _world(world, rule_id, text, TUNES)
+    for setup, rate in (("a", 0.4321), ("b", 0.25)):
+        world.write(f"setups/{setup}/tune/results/metrics.json", json.dumps({"hit_rate": rate}))
+
+
+@proof("claims/receipt", "units that share a folder name, each cited by its path", expect="pass")
+def _(world: World) -> None:
+    _tunes(world, "claims/receipt", ONE + "Setup a hit 0.43<!--t:setups/a/tune#hit_rate--> of its trades, and b "
+                                          "0.25<!--t:setups/b/tune#hit_rate-->.\n")
+
+
+@proof("claims/receipt", "a tag that names a folder name two units share", expect="refuse",
+       contains="the folder name tune is shared by setups/a/tune, setups/b/tune: name the unit by its whole path")
+def _(world: World) -> None:
+    _tunes(world, "claims/receipt", ONE + "Setup a hit 0.43<!--t:tune#hit_rate--> of its trades.\n")
+
+
+@proof("claims/links", "a tag that names a folder name two units share does not resolve", expect="fail",
+       contains="does not resolve: the folder name tune is shared by")
+def _(world: World) -> None:
+    _tunes(world, "claims/links", ONE + "Setup a hit 0.43<!--t:tune#hit_rate--> of its trades.\n")
+
+
 @proof("claims/receipt", "a tag whose key the metrics do not hold", expect="refuse", contains="hold no number under")
 def _(world: World) -> None:
     _world(world, "claims/receipt", ONE.replace("uplift_half_stop", "uplift_full_stop"))
@@ -244,13 +293,19 @@ def fresh(ctx: Context) -> None:
                        fix="run the work again so it writes its fingerprint, with an input that is in the repository")
             return []
 
+    old = _predating(ctx)
     for path, text in _documents(ctx):
         for tag in claims.find_tags(text):
+            if tag.work in old:
+                continue  # it cites a unit begun before the rule's start date
             ctx.inspect()
-            unit = units.get(tag.work)
-            if unit is None:
-                ctx.refuse(f"the tag t:{tag.work}#{tag.key} names no unit of work", where=path, fix=FIX_RECORD)
-            elif (moved := changed(unit)) and tag.flag != "stale":
+            try:
+                unit = units.unit(tag.work)
+            except ValueError as error:
+                ctx.refuse(f"the tag t:{tag.work}#{tag.key} names no unit of work that can be told apart: {error}",
+                           where=path, fix=FIX_RECORD)
+                continue
+            if (moved := changed(unit)) and tag.flag != "stale":
                 ctx.breach(f"the tag t:{tag.work}#{tag.key} cites a record whose input {moved[0]} changed since the "
                            "record was made", where=path, line=tag.line,
                            fix="run the work again and cite the new number, or mark the tag: <!--t:WORK#KEY stale-->")
@@ -434,6 +489,7 @@ def links(ctx: Context) -> None:
     if units is None:
         return
     files = set(ctx.all_files)  # the repository's own files, so a link resolves the same way on every machine
+    old = _predating(ctx)
     decided = functools.cache(lambda: {claims.folder_name(str(row.get("work"))) for row in ctx.records("decision")})
     for path, text in _documents(ctx):
         ctx.inspect()
@@ -443,6 +499,8 @@ def links(ctx: Context) -> None:
                 ctx.breach(f"the link {target} points at {name}, which is not in the repository", where=path,
                            line=line, fix="correct the link, or restore the file it points at")
         for tag in claims.find_tags(text):
+            if tag.work in old:
+                continue  # it cites a unit begun before the rule's start date
             try:
                 claims.resolve(ctx.root, units, tag.work, tag.key, ctx.param("metrics"))
             except ValueError as error:
@@ -490,3 +548,67 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     _world(world, "claims/links", ONE)
     world.remove("REPORT.md")
+
+
+# -- a start date: a tag that cites work begun before it is not checked --------------------------
+
+SINCE = '\nsince = "2026-06-01"'
+LATE_METRICS = '{"hit_rate": 0.4321}\n'
+
+
+def _old_and_late(world: World, rule_id: str, late_tag: str) -> None:
+    """open-drive is committed before the rule's start date; the unit late, and the report, after it."""
+    _world(world, rule_id, "", UNITS + SINCE)
+    world.commit("before the rule")
+    world.on("2026-07-01")
+    world.write("work/late/results/metrics.json", LATE_METRICS)
+    world.write("REPORT.md", ONE.replace("3.7", "4.1") + late_tag)
+    world.commit("after the rule")
+
+
+@proof("claims/receipt", "a folder begun before the start date, with results first made after it, is checked",
+       expect="fail", contains="the document says 0.51, but the record late#hit_rate holds 0.4321")
+def _(world: World) -> None:
+    _world(world, "claims/receipt", "", UNITS + SINCE)
+    world.write("work/late/PLAN.md", "the plan, written before the rule\n")
+    world.commit("before the rule")
+    world.on("2026-07-01")
+    world.write("work/late/results/metrics.json", LATE_METRICS)
+    world.write("REPORT.md", "The hit rate was 0.51<!--t:late#hit_rate-->.\n")
+    world.commit("after the rule")
+
+
+@proof("claims/receipt", "a wrong number citing work from before the start date is not checked", expect="pass")
+def _(world: World) -> None:
+    _old_and_late(world, "claims/receipt", "The hit rate was 0.43<!--t:late#hit_rate-->.\n")
+
+
+@proof("claims/receipt", "a wrong number citing work begun after the start date is still caught", expect="fail",
+       contains="the document says 0.51, but the record late#hit_rate holds 0.4321")
+def _(world: World) -> None:
+    _old_and_late(world, "claims/receipt", "The hit rate was 0.51<!--t:late#hit_rate-->.\n")
+
+
+@proof("claims/links", "a dead key citing work from before the start date is not checked", expect="pass")
+def _(world: World) -> None:
+    _old_and_late(world, "claims/links", "Old: 1<!--t:open-drive#gone--> and 0.43<!--t:late#hit_rate-->.\n")
+
+
+@proof("claims/links", "a dead key citing work begun after the start date is still caught", expect="fail",
+       contains="the metrics of late hold no number under the key gone")
+def _(world: World) -> None:
+    _old_and_late(world, "claims/links", "New: 1<!--t:late#gone-->.\n")
+
+
+@proof("claims/fresh", "a record from before the start date has no fingerprint, and is not checked", expect="pass")
+def _(world: World) -> None:
+    _old_and_late(world, "claims/fresh", "The hit rate was 0.43<!--t:late#hit_rate-->.\n")
+    world.write("data/fills.csv", DATA)
+    world.write("work/late/results/provenance.json", json.dumps({"inputs": {"data/fills.csv": work.text_hash(DATA)}}))
+    world.commit("the late fingerprint")
+
+
+@proof("claims/fresh", "a record begun after the start date with no fingerprint is still refused", expect="refuse",
+       contains="work/late/results/provenance.json is missing")
+def _(world: World) -> None:
+    _old_and_late(world, "claims/fresh", "The hit rate was 0.43<!--t:late#hit_rate-->.\n")

@@ -1,7 +1,7 @@
 # The trading pack
 
-> 2026-11-16. Status: **built**. Standard id: `themis-trading/1`. `themis describe` lists each
-> rule below and whether its proofs hold.
+> 2026-11-19. Status: **built**: nineteen rules in six gates. Standard id: `themis-trading/1`.
+> `themis describe` lists each rule below and whether its proofs hold.
 
 **In one line:** this pack teaches Themis what evidence means in trading research. A trial is
 counted before it runs, the plan is sealed before the answer is known, unseen data is looked at
@@ -18,7 +18,7 @@ Turn it on in the manifest:
 packs = ["trading"]
 
 [trading]
-work = "research/experiments/*"
+work = "research/experiments/*"     # or a list: ["research/experiments/*", "systems/*/tune"]
 ```
 
 ## 1. What the pack adds to the core
@@ -60,14 +60,15 @@ A study is one folder. The pack reads these files in it, and these records besid
 
 | Record | Where | Holds |
 | --- | --- | --- |
-| Trial | `ledger/*.toml` | `work`: the study's folder. `variants`: how many variants it covers; 1 when unset |
-| Pre-registration | `<study>/PRE-REG*.md` | Frontmatter: `kind`, the fields its kind needs, and where they apply `cost_model`, `title` and `not_run_reason` |
+| Trial | `ledger/*.toml` | `work`: the study's path, or its folder name when no other study shares it. `variants`: how many variants it covers; 1 when unset |
+| Pre-registration | `<study>/PRE-REG*.md` | Frontmatter: `kind`, the fields its kind needs, and where they apply `cost_model`, `title` and `not_run_reason`; the study's own windows as `window-<id>` (section 7) |
 | Provenance | `<study>/results/provenance.json` | `commit`, `clean` (must be true), and `inputs`: each input's path with its sha256 |
 | Metrics | `<study>/results/metrics.json` | The numbers the gate reads; `net_of_cost` and `costs_paid`; the `scorecard` table (section 9) |
 | Trade table | `<study>/results/trades.csv` | One row for each closed trade (section 8) |
 | Audit | `<study>/AUDIT.md` | Frontmatter: `status`, `script`, `study_code` |
 | Verdict | `decisions/*.json` | The core's decision record: the decision, the verdict, the gate and its version, the date, the numbers |
-| Look | `looks/*.toml` | `window`, `kind` (signal or pipeline), `at`, `grant`, and for a pipeline look its `scope`, `purpose` and `compared_against` |
+| Look | `looks/*.toml` | `window`, `study`, `kind` (signal or pipeline), `at`, `grant`, and for a pipeline look its `scope`, `purpose` and `compared_against` |
+| Comparison | `comparisons/**/*.json` | `what` is compared, and `runs`: two or more runs side by side, each with `run` (its id) and the fingerprint fields the project names. Tracked, since a rule cannot see an ignored file |
 
 ## 4. The lifecycle
 
@@ -83,7 +84,7 @@ A study is one folder. The pack reads these files in it, and these records besid
 
 ## 5. The pack's rules
 
-Seventeen rules in five gates, beside the core's.
+Nineteen rules in six gates, beside the core's.
 
 ### Gate: trials — attempts are counted honestly
 
@@ -117,15 +118,22 @@ Seventeen rules in five gates, beside the core's.
 | `validity/power-stated` | A kill states the power it had, and a fail with too little power is recorded as a deferral. | `min_power`; 0.8 when unset |
 | `validity/audit-reproduced` | A study's numbers are decided on only after a separate script reproduces them. | `forbidden`: modules no audit may import |
 | `validity/confirm-on-real-ticks` | A tuning study's confirming run uses the most faithful model the project named. | `confirm_model` under `[trading.tune]` |
+| `validity/same-basis` | A comparison sets side by side only runs that share every fingerprint field the project names. | `fields` |
 
 ### Gate: scorecard — a result a newcomer can read
 
 | Rule | The promise | Parameters |
 | --- | --- | --- |
 | `scorecard/complete` | A study that books trades or predicts ships its scorecard, with no line left unexplained. | — |
-| `scorecard/believable` | A published result answers five questions about how far it can be believed. | — |
-| `scorecard/explainer` | A published result has one short page for a newcomer, or says why it has none. | `max_bytes`, `max_controls` |
+| `scorecard/believable` | A published result answers five questions about how far it can be believed. | `kinds` |
+| `scorecard/explainer` | A published result has one short page for a newcomer, or says why it has none. | `max_bytes`, `max_controls`, `kinds` |
 | `scorecard/rendering` | No page puts two bare dollar signs in one line, and no chart file is oversized. | `max_chart_bytes` |
+
+### Gate: live — nothing trades live by default
+
+| Rule | The promise | Parameters |
+| --- | --- | --- |
+| `live/off-by-default` | Every live-trading switch holds its safe value in the source, unless the owner granted that file its flip. | `switches`, `absent` |
 
 ### Core rules the pack configures
 
@@ -136,10 +144,12 @@ Once `work` is set, the pack gives these core rules what they need, so a project
 | `order/sealed-first`, `order/unchanged` | The seal is `PRE-REG*.md` |
 | `order/logged-first`, `ledger/complete` | A result is anything under `results/` |
 | `report/generated`, `report/readable` | The report is `results/report.html`, built from the trade table, the metrics and the audit |
-| `grant/required` | The action `holdout` is guarded, when the manifest seals a window |
+| `grant/required` | The action `holdout` is guarded, when a window is sealed: in the manifest, a study table or a seal. A project that states its own `guarded` list replaces this one, so it keeps `holdout` in it |
 
 What the rules read, in more detail:
 
+- **`trials/settings-counted`.** With `since`, a study whose seal reached the main line before
+  that date is left alone, as the order rules leave it.
 - **`trials/count-feeds-adjustment`.** Metrics that hold `luck_adjusted_sharpe` must hold
   `trials_counted` beside it, and it must be at least the ledger's count plus the penalty. The
   count is of the trials the ledger held at the commit that last wrote the metrics file, so a
@@ -152,17 +162,36 @@ What the rules read, in more detail:
   `costs_paid`.
 - **`validity/power-stated`.** A decision that fails must carry `numbers.mde` and
   `numbers.power`, and the power must reach `min_power`. A gate in this pack records a weak "no"
-  as a deferral by itself; this rule catches a kill written any other way.
+  as a deferral by itself; this rule catches a kill written any other way. A `tune` study's kill is
+  not read: a budget spent or a stage failed is a stage outcome, not a test too weak to see.
 - **`validity/audit-reproduced`.** A `strategy` or `signal` study with a decision needs
   `AUDIT.md` with `status: reproduced` or `differences-explained`, and a `script` in the study
   folder. The script may not be the study's own code and may not import it.
 - **`validity/confirm-on-real-ticks`.** It binds a `tune` study whose decision is a pass: the
-  decision's `numbers.confirm_model` must be the model named under `[trading.tune]`.
+  decision's `numbers.confirm_model` must be the model named under `[trading.tune]`. The `tune`
+  gate copies `confirm_model` from the study's metrics into its numbers, so the metrics name it.
+- **`validity/same-basis`.** Each comparison record must list two or more distinct runs, and
+  every run must state each field in `fields` with the same value as the others. One run cut into
+  pieces, such as a by-year table, is not a comparison and writes no record; a record that holds
+  only one run's pieces fails.
 - **`scorecard/believable`.** The study's README has a heading that holds "How believable is
   this?" with five numbered answers under it: the independent unit, how many were checked, what
   could be missed, whether the sources are independent, and what is unexplained.
 - **`scorecard/explainer`.** The page is `results/explainer/index.html`, with one how-to-read
   box. A study with no page says `explainer: none` in its README, and why.
+- **`live/off-by-default`.** Each switch names `files` (a path pattern), `pattern` (a regular
+  expression read line by line, whose one capture group is the value) and `safe`. Every match in
+  every selected file must hold the safe value. A file that holds another value fails, and says
+  whether it was flipped from the main line or written that way, until the owner runs `themis grant
+  live <file>` for that file. A selected file with no switch is refused, or skipped with `absent =
+  "skip"`. A pattern that matches no file, or has other than one capture group, is refused.
+- **`scorecard/rendering`.** It reads every Markdown page in a study with the core's reader, the
+  one `docs/no-bare-dollar-pairs` uses: a sign in a code span, a fence, an HTML block or a link
+  target is not prose, and a fence closes only as CommonMark says. A project that turns on the
+  core rule for every page still keeps this one for its studies' chart sizes.
+- **`scorecard/believable` and `scorecard/explainer`** bind every kind of study unless `kinds`
+  names fewer, and a study whose kind cannot be read is always bound. Both honour `since`: a study
+  whose seal reached the main line before that date is left alone.
 
 ## 6. The gate functions
 
@@ -208,10 +237,12 @@ Everything here belongs to the project.
 
 | Where | Parameter | Meaning |
 | --- | --- | --- |
-| `[trading]` | `work` | The folders that each hold one study |
+| `[trading]` | `work` | The folders that each hold one study: one glob, or a list of them. A study is named by its whole path, so two studies may share a folder name |
 | `[trading.windows.<name>]` | `from`, `to` | The window's dates |
 | | `sealed` | True for a window that opens only with a grant |
 | | `looks` | How many signal looks the window allows; 1 when unset |
+| `[trading.studies."<study>".windows.<name>]` | `from`, `to`, `sealed`, `looks` | A window of one study's own, keyed by the study's folder |
+| A study's seal | `window-<name>` | A window of the study's own, as an inline table: `{from = "2025-01-01", to = "2025-12-31", sealed = true}` |
 | `[trading.costs.<name>]` | `derivation` | Where the cost was measured. Any other key is the project's own |
 | `[trading.tune]` | `confirm_model` | The most faithful model a confirming run can use |
 | | `risk_rules`, `iterations` | Accepted, and read by no rule yet. Each `tune` study states its own in its seal, and `prereg/declared` checks them there |
@@ -220,8 +251,12 @@ Everything here belongs to the project.
 | `validity/baselines` | `extra` | Further baseline lines the scorecard must carry |
 | `validity/power-stated` | `min_power` | The least power a test must have had for its fail to stand |
 | `validity/audit-reproduced` | `forbidden` | Modules no audit script may import |
+| `validity/same-basis` | `fields` | The fingerprint fields every run in a comparison must share, such as `window`, `settings`, `cost_model` or `session` |
 | `scorecard/explainer` | `max_bytes`, `max_controls` | The caps on the explainer page |
+| `scorecard/believable`, `scorecard/explainer` | `kinds` | The kinds of study the rule binds; every kind when unset |
 | `scorecard/rendering` | `max_chart_bytes` | The cap on one page or picture under `results/` |
+| `live/off-by-default` | `switches` | Each live-trading switch: `files`, `pattern` with one capture group, and its `safe` value |
+| | `absent` | `refuse` (the default: a selected file must hold the switch) or `skip` |
 
 ```toml
 [trading.windows.train]
@@ -233,6 +268,11 @@ from = "2022-01-01"
 to = "2024-12-31"
 sealed = true
 looks = 1
+
+[trading.studies."research/experiments/2026-01-10_rsi".windows.oos-2025]
+from = "2025-01-01"
+to = "2025-12-31"
+sealed = true
 
 [trading.costs.example]
 toll_per_side = 0.10
@@ -247,14 +287,35 @@ confirm_model = "real ticks"
 [rules."validity/power-stated"]
 level = "enforce"
 min_power = 0.9
+
+[rules."live/off-by-default"]
+switches = [{files = "strategies/**/*.py", pattern = '^LIVE\s*=\s*(\w+)', safe = "False"}]
+
+[rules."validity/same-basis"]
+fields = ["window", "cost_model", "session"]
 ```
+
+**Changing `[trading]`.** `config/no-silent-weakening` reads each key in its own direction. A new
+window, study window, cost model or study folder adds a check, and needs no grant. A window's
+`looks` raised above 1, `sealed` taken off, its dates moved, a cost model's figures changed or
+added, `confirm_model` changed, or `iterations` raised is a weakening, and needs the owner's grant.
+
+**A study's own windows.** A study reads the project's windows and its own. A window id names one
+window wherever it is declared: studies that share an id give it the same dates, or
+`prereg/declared` fails the second declaration, and `holdout/one-signal-look` counts their looks
+together. So sibling studies on the same data share an id, and a study on other dates takes an id
+of its own. A look is keyed by its study and its window, and so is the grant that opens it:
+`themis grant holdout <study>/<window>`, and `themis act holdout <study>/<window>` needs a grant
+for that exact target. A grant that names one of the project's windows alone opens it for one look
+read through `data.window`, or through `themis act holdout <window>`, which records no study.
 
 **The standard.** A project that sets `standard = "themis-trading/1"` under `[project]` says it
 holds this floor. These are all at `enforce`: the order, prereg, trials, holdout and decision
 rules, `ledger/complete`, every validity rule but `validity/confirm-on-real-ticks`,
-`scorecard/complete`, `scorecard/believable`, `report/generated`, `config/locked` and
-`config/no-silent-weakening`. A gate says yes to noise at most one time in ten and finds a
-planted effect at least four times in five. And `min_power` is at least 0.8.
+`live/off-by-default`, `scorecard/complete`, `scorecard/believable`, `report/generated`,
+`config/locked` and `config/no-silent-weakening`. A gate says yes to noise at most one time in ten and finds a
+planted effect at least four times in five. `min_power` is at least 0.8, and
+`live/off-by-default` refuses a file with no switch (`absent = "refuse"`).
 `config/standard-floor` lists every place the project sits below it.
 
 ## 8. What a project's own code uses
@@ -266,7 +327,7 @@ of, in `themis.packs.trading`.
 | --- | --- |
 | `trades.from_rows(rows, mapping)` | Turns rows from any engine, whatever its columns are called, into standard trades |
 | `trades.write_trades`, `trades.read_trades` | Write and read the standard trade table. A table that breaks the standard is refused, with the row and the reason |
-| `data.window(root, manifest, name, grant=...)` | Hands over a window's dates. A sealed window needs an unused grant for it, and the look is written down first |
+| `data.window(root, manifest, name, grant=..., study=...)` | Hands over a window's dates. A sealed window needs an unused grant for it, and the look is written down first |
 | `scorecard.compute`, `report.write_report` | What `themis report` calls |
 
 The standard trade table has one row for each closed trade: `entry_time`, `exit_time`, `side`,
@@ -275,9 +336,16 @@ The standard trade table has one row for each closed trade: `entry_time`, `exit_
 the trade. One table means one scorecard, so a strategy from any engine can be laid beside any
 other.
 
-A look at sealed data goes like this. The owner runs `themis grant holdout <window> --reason
-...`. The study's code calls `data.window` with that grant. The look record and an action receipt
-are written, and only then are the dates returned. The same grant does not open the window twice.
+A look at sealed data goes like this. The owner runs `themis grant holdout <study>/<window>
+--reason ...`. The study's code calls `data.window` with that grant and the study. The look record
+and an action receipt are written, and only then are the dates returned. The same grant does not
+open the window twice.
+
+A look made by a program outside Python, such as an outside tester, goes through `themis act
+holdout <study>/<window> -- <command>`. The pack writes the signal look before the command starts,
+and the core writes the action receipt. The command can call `themis act --verify holdout
+<study>/<window>` and refuse to run without it. A project that states its own `guarded` list for
+`grant/required` keeps `holdout` in it.
 
 ## 9. The report
 
@@ -326,6 +394,9 @@ Every rule has cases that pass, fail and refuse, and `themis prove` runs them. A
 | `trials/settings-counted` | Add a run with new settings and no trial | FAIL |
 | `validity/power-stated` | Record a kill with no power statement | FAIL |
 | `validity/audit-reproduced` | Name the study's own run script as its audit | FAIL |
+| `validity/same-basis` | Rank two runs from two different sessions side by side | FAIL |
+| `live/off-by-default` | Flip a live-trading switch on a branch with no grant | FAIL |
+| `scorecard/rendering` | Two prices on one line, after a shorter fence inside a long one | FAIL |
 | A gate function | Feed it noise; feed it a planted edge | It says no; it says yes |
 
 ## 11. What this pack cannot do
@@ -362,5 +433,6 @@ Not built yet:
 Each rule exists because of an incident in a real project: fills at prices that never traded, a
 parameter grid that ran unlogged, sealed data read by agents whose prompts never mentioned the
 seal, a merge that joined a seal to its results, a study that stopped reproducing itself, a kill
-issued by a test with too little power, and tuned settings that passed both test windows and then
-lost on unseen years.
+issued by a test with too little power, tuned settings that passed both test windows and then
+lost on unseen years, two runs ranked against each other on costs from different days, and a
+strategy whose source turned live trading on by default.

@@ -82,27 +82,30 @@ class Git:
     def arrivals(self, ref: str) -> dict[str, int]:
         """For each file, the position on the main line of the commit that first brought it.
 
-        Position 0 is the oldest commit. A merge is read against its first parent, so every file a
-        pull request added arrives at that pull request's merge.
+        Position 0 is the oldest commit, and a position indexes `main_line`, which holds every
+        commit of the main line: one that adds nothing still takes its place. A merge is read
+        against its first parent, so every file a pull request added arrives at that pull request's
+        merge.
         """
         out = self.run("log", "--first-parent", "-m", "-M", "--diff-filter=AR", "--name-status", "--format=@%H", ref)
         if out is None:
             return {}
-        commits: list[list[str]] = []
+        # The log lists only the commits that add or rename a file, so each one is placed by its own
+        # hash on the whole main line, never by its rank among those few.
+        positions = {commit: position for position, commit in enumerate(self.main_line(ref))}
+        found: dict[str, int] = {}
+        position: int | None = None
         for line in out.splitlines():
             if line.startswith("@"):
-                commits.append([])
-            elif line.strip() and commits:
-                commits[-1].append(line.split("\t")[-1])
-        found: dict[str, int] = {}
-        for position, names in enumerate(reversed(commits)):
-            for name in names:
-                found.setdefault(name, position)
+                position = positions.get(line[1:].strip())
+            elif line.strip() and position is not None:
+                name = line.split("\t")[-1]
+                found[name] = min(found.get(name, position), position)
         return found
 
     @functools.lru_cache(maxsize=None)
     def main_line(self, ref: str) -> list[str]:
-        """The commits of the main line, oldest first: positions match `arrivals`."""
+        """Every commit of the main line, oldest first: an `arrivals` position indexes this list."""
         out = self.run("rev-list", "--first-parent", "--reverse", ref)
         return (out or "").split()
 
@@ -126,3 +129,45 @@ class Git:
     def tree_id(self) -> str | None:
         out = self.run("rev-parse", "--verify", "--quiet", "HEAD^{tree}")
         return out.strip() if out else None
+
+    def ignored(self, names: list[str]) -> set[str] | None:
+        """The paths among these that git ignores, as they were given, or None when git cannot say.
+
+        A path need not exist. A tracked file is never ignored, whatever the ignore files say, and
+        a path under an ignored folder is. Give a folder with a trailing slash.
+        """
+        if not names:
+            return set()
+        if not self.is_repo:
+            return None
+        try:
+            done = subprocess.run(
+                ["git", "check-ignore", "--stdin", "-z"], cwd=self.root, input="\0".join(names) + "\0",
+                capture_output=True, text=True, timeout=120, check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+        if done.returncode == 128 and self._answers():
+            # One path git will not take, such as one beyond a symbolic link, fails the whole list.
+            # Ask path by path: a path git refuses is not one it ignores.
+            if len(names) == 1:
+                return set()
+            found: set[str] = set()
+            for name in names:
+                alone = self.ignored([name])
+                if alone is None:
+                    return None
+                found |= alone
+            return found
+        if done.returncode not in (0, 1):  # 1: nothing among them is ignored
+            return None
+        return {name for name in done.stdout.split("\0") if name}
+
+    def _answers(self) -> bool:
+        """True when git can say what it ignores here at all, so a refusal was about one path."""
+        try:
+            done = subprocess.run(["git", "check-ignore", "-q", "--", "."], cwd=self.root, capture_output=True,
+                                  text=True, timeout=60, check=False)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+        return done.returncode in (0, 1)

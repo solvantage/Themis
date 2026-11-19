@@ -161,7 +161,7 @@ def decided(tmp_path: Path, edge: float) -> World:
 def test_the_gate_issues_the_decision_from_the_studys_numbers_and_it_checks_clean(tmp_path: Path) -> None:
     world = decided(tmp_path, edge=1.0)
     assert run(world, "decide", "a", "--gate", "entry") == EXIT_PASS
-    stored = json.loads((world.root / "decisions/a.json").read_text())
+    stored = json.loads((world.root / "decisions/work-a.json").read_text())
     assert (stored["decision"], stored["verdict"]) == ("promote", "pass")
     assert verdict(world, "decision/issued-by-gate") is Verdict.PASS
 
@@ -169,11 +169,23 @@ def test_the_gate_issues_the_decision_from_the_studys_numbers_and_it_checks_clea
 def test_noise_is_not_promoted_and_a_kinder_decision_typed_over_it_fails(tmp_path: Path) -> None:
     world = decided(tmp_path, edge=0.0)
     assert run(world, "decide", "a", "--gate", "entry") in (EXIT_FAIL, EXIT_REFUSE)
-    path = world.root / "decisions/a.json"
+    path = world.root / "decisions/work-a.json"
     stored = json.loads(path.read_text())
     assert stored["decision"] != "promote"
     path.write_text(json.dumps({**stored, "decision": "promote", "verdict": "pass"}))
     assert verdict(world, "decision/issued-by-gate") is Verdict.FAIL
+
+
+@pytest.mark.parametrize(("used", "expected"), [("Real Ticks", Verdict.PASS), ("open prices only", Verdict.FAIL)])
+def test_a_tune_pass_from_the_gate_carries_its_confirming_model_to_the_validity_rule(
+        tmp_path: Path, used: str, expected: Verdict) -> None:
+    world = study(tmp_path, kind="tune", booked=False)
+    world.manifest(MANIFEST + '\n[trading.tune]\nconfirm_model = "real ticks"\n')
+    world.write("work/a/results/metrics.json", json.dumps({**gates.tune_case(), "confirm_model": used}))
+    assert run(world, "decide", "a", "--gate", "tune") == EXIT_PASS
+    [stored] = [json.loads(path.read_text()) for path in (world.root / "decisions").glob("*.json")]
+    assert (stored["decision"], stored["numbers"]["confirm_model"]) == ("full-pass", used)
+    assert verdict(world, "validity/confirm-on-real-ticks") is expected
 
 
 # -- the sealed window ---------------------------------------------------------------------------

@@ -171,11 +171,14 @@ def find_grant(grants: Iterable[Any], action: str, target: str) -> Any | None:
 def record_action(
     root: Path, action: str, target: str, *, grant: Any = None, amount: float | None = None,
     unit: str | None = None, by: str | None = None, now: dt.datetime | None = None,
+    details: dict[str, Any] | None = None,
 ) -> Path:
     """Write the receipt of a guarded action that ran, and return its path.
 
     `grant` is the grant the action used: its record, its path or its id. The receipt is committed,
-    under `receipts/action/`, so `grant/required` can compare it with the grants.
+    under `receipts/action/`, so `grant/required` can compare it with the grants. `details` adds
+    fields of the tool that ran the action, such as the command `themis act` ran; they never
+    replace the fields above.
     """
     _named(action=action, target=target)
     if amount is not None and (isinstance(amount, bool) or not isinstance(amount, (int, float))
@@ -185,6 +188,7 @@ def record_action(
     data: dict[str, Any] = {"action": action, "target": target, "at": moment.isoformat()}
     optional = (("grant", grant_id(grant)), ("amount", amount), ("unit", unit), ("by", by))
     data.update({key: value for key, value in optional if value is not None})
+    data = {**(details or {}), **data}
     folder = Path(root) / receipts.COMMITTED / "action"
     name = _free(folder, f"{moment.strftime('%Y-%m-%d-%H%M%S')}-{slug(action)}-{slug(target)}", ".json")
     return receipts.write(Path(root), "action", name, data, committed=True)
