@@ -83,7 +83,7 @@ A study is one folder. The pack reads these files in it, and these records besid
 
 ## 5. The pack's rules
 
-Seventeen rules in five gates, beside the core's.
+Eighteen rules in six gates, beside the core's.
 
 ### Gate: trials — attempts are counted honestly
 
@@ -127,6 +127,12 @@ Seventeen rules in five gates, beside the core's.
 | `scorecard/explainer` | A published result has one short page for a newcomer, or says why it has none. | `max_bytes`, `max_controls`, `kinds` |
 | `scorecard/rendering` | No page puts two bare dollar signs in one line, and no chart file is oversized. | `max_chart_bytes` |
 
+### Gate: live — nothing trades live by default
+
+| Rule | The promise | Parameters |
+| --- | --- | --- |
+| `live/off-by-default` | Every live-trading switch holds its safe value in the source, unless the owner granted that file its flip. | `switches`, `absent` |
+
 ### Core rules the pack configures
 
 Once `work` is set, the pack gives these core rules what they need, so a project does not have to.
@@ -165,6 +171,12 @@ What the rules read, in more detail:
   could be missed, whether the sources are independent, and what is unexplained.
 - **`scorecard/explainer`.** The page is `results/explainer/index.html`, with one how-to-read
   box. A study with no page says `explainer: none` in its README, and why.
+- **`live/off-by-default`.** Each switch names `files` (a path pattern), `pattern` (a regular
+  expression read line by line, whose one capture group is the value) and `safe`. Every match in
+  every selected file must hold the safe value. A file that holds another value fails, and says
+  whether it was flipped from the main line or written that way, until the owner runs `themis grant
+  live <file>` for that file. A selected file with no switch is refused, or skipped with `absent =
+  "skip"`. A pattern that matches no file, or has other than one capture group, is refused.
 - **`scorecard/believable` and `scorecard/explainer`** bind every kind of study unless `kinds`
   names fewer, and a study whose kind cannot be read is always bound. Both honour `since`: a study
   whose seal reached the main line before that date is left alone.
@@ -228,6 +240,8 @@ Everything here belongs to the project.
 | `scorecard/explainer` | `max_bytes`, `max_controls` | The caps on the explainer page |
 | `scorecard/believable`, `scorecard/explainer` | `kinds` | The kinds of study the rule binds; every kind when unset |
 | `scorecard/rendering` | `max_chart_bytes` | The cap on one page or picture under `results/` |
+| `live/off-by-default` | `switches` | Each live-trading switch: `files`, `pattern` with one capture group, and its `safe` value |
+| | `absent` | `refuse` (the default: a selected file must hold the switch) or `skip` |
 
 ```toml
 [trading.windows.train]
@@ -253,14 +267,18 @@ confirm_model = "real ticks"
 [rules."validity/power-stated"]
 level = "enforce"
 min_power = 0.9
+
+[rules."live/off-by-default"]
+switches = [{files = "strategies/**/*.py", pattern = '^LIVE\s*=\s*(\w+)', safe = "False"}]
 ```
 
 **The standard.** A project that sets `standard = "themis-trading/1"` under `[project]` says it
 holds this floor. These are all at `enforce`: the order, prereg, trials, holdout and decision
 rules, `ledger/complete`, every validity rule but `validity/confirm-on-real-ticks`,
-`scorecard/complete`, `scorecard/believable`, `report/generated`, `config/locked` and
-`config/no-silent-weakening`. A gate says yes to noise at most one time in ten and finds a
-planted effect at least four times in five. And `min_power` is at least 0.8.
+`live/off-by-default`, `scorecard/complete`, `scorecard/believable`, `report/generated`,
+`config/locked` and `config/no-silent-weakening`. A gate says yes to noise at most one time in ten and finds a
+planted effect at least four times in five. `min_power` is at least 0.8, and
+`live/off-by-default` refuses a file with no switch (`absent = "refuse"`).
 `config/standard-floor` lists every place the project sits below it.
 
 ## 8. What a project's own code uses
@@ -368,5 +386,5 @@ Not built yet:
 Each rule exists because of an incident in a real project: fills at prices that never traded, a
 parameter grid that ran unlogged, sealed data read by agents whose prompts never mentioned the
 seal, a merge that joined a seal to its results, a study that stopped reproducing itself, a kill
-issued by a test with too little power, and tuned settings that passed both test windows and then
-lost on unseen years.
+issued by a test with too little power, tuned settings that passed both test windows and then
+lost on unseen years, and a strategy whose source turned live trading on by default.
