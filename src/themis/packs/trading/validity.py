@@ -1,13 +1,16 @@
 """Gate: validity — the statistics can be trusted.
 
-Six rules about the numbers a study rests on. Beside the layout in `units.py`, they read:
+Seven rules about the numbers a study rests on. Beside the layout in `units.py`, they read:
 
     PRE-REG.md              frontmatter `cost_model`: a name declared under [trading.costs]
     results/scorecard.csv   a CSV with at least the columns `line` and `value`
     results/metrics.json    `net_of_cost`, which must be true, and `costs_paid`, 0 or more
     AUDIT.md                frontmatter `status` (reproduced, differences-explained or not-yet), `script` (a file
                             in the study folder) and `study_code` (the study's own modules, as a list)
-    a decision record       `numbers.mde` and `numbers.power` on a fail; `numbers.confirm_model` on a tune
+    a decision record       `numbers.mde` and `numbers.power` on a fail but a tune kill; `numbers.confirm_model`
+                            on a tune pass
+    a comparison record     `runs`: two or more runs set side by side, each with `run` (its id) and the
+                            fingerprint fields the project names, such as window, cost_model or session
 """
 
 from __future__ import annotations
@@ -23,9 +26,14 @@ from typing import TYPE_CHECKING, Any
 from themis import records
 from themis.packs.trading import trades, units
 from themis.rule import Context, Param, proof, rule
+from themis.schema import ANY, Required
 
 if TYPE_CHECKING:
     from themis.proofs import World
+
+records.register("comparison", {
+    "what": str, "runs": Required([{"run": Required(str), "*": ANY}]), "*": ANY,
+}, "comparisons/**/*.json")
 
 SHOWN = 5  # the unfillable trades named one by one; the rest are counted
 BASELINES = ("always_long", "always_short")
@@ -286,6 +294,8 @@ def power_stated(ctx: Context) -> None:
     fix = ('a fail with too little power is recorded with the verdict "refuse" and the decision "defer"; a fail '
            "that stands states numbers.mde, the smallest effect its test could have seen, and numbers.power")
     for unit, found in sorted(units.decisions(ctx).items()):
+        if unit in studies and units.kind(ctx, unit, studies[unit]) == "tune":
+            continue  # a tune kill is a stage outcome, such as a budget spent or a stage failed: no weak test
         for record in found if unit in studies else ():
             ctx.inspect()
             if record.get("verdict") != "fail" or record.get("by") == "owner":
@@ -309,6 +319,19 @@ def _(world: World) -> None:
 @proof("validity/power-stated", "a kill with no power statement", expect="fail", contains="numbers.power is missing")
 def _(world: World) -> None:
     _decided(world, **KILL, numbers={"mde": 0.02})
+
+
+@proof("validity/power-stated", "a tune kill is a stage outcome, not an under-powered test", expect="pass")
+def _(world: World) -> None:
+    _decided(world, "tune", **KILL, numbers={"settings_tried": 51, "budget": 50})
+    _decided(world, name="b", **KILL, numbers={"mde": 0.02, "power": 0.8})
+
+
+@proof("validity/power-stated", "a strategy kill with no power, beside a tune kill", expect="fail",
+       contains="numbers.mde is missing, numbers.power is missing")
+def _(world: World) -> None:
+    _decided(world, "tune", **KILL, numbers={"settings_tried": 51, "budget": 50})
+    _decided(world, name="b", **KILL)
 
 
 @proof("validity/power-stated", "a kill with no smallest effect", expect="fail", contains="numbers.mde is missing")
@@ -523,3 +546,82 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     _decided(world, "tune", manifest=TUNED)
     world.write("decisions/a.json", '{"work": "work/a", "numbers": {"confirm_model": "real ticks"}\n')
+
+
+# -- validity/same-basis ------------------------------------------------------------------------
+
+
+@rule("validity/same-basis",
+      "A comparison sets side by side only runs that share every fingerprint field the project names.",
+      pack="trading",
+      params=(Param("fields", [str], None, "larger",
+                    "the fingerprint fields every run in a comparison must share, such as window or cost_model"),),
+      requires=("fields",),
+      learned="Two runs were ranked against each other though their costs came from different days, and the "
+              "ranking measured the costs.")
+def same_basis(ctx: Context) -> None:
+    fix = "compare only runs made on the same basis: run them again on one basis, or drop this comparison"
+    for record in ctx.records("comparison"):
+        ctx.inspect()
+        runs = record.get("runs")
+        named = sorted({run["run"] for run in runs})
+        if len(named) < 2:
+            held = (f"holds {len(runs)} piece{'s' * (len(runs) > 1)} of {_shown(named[0])}: one run cut into "
+                    "pieces, such as by year, is not a comparison") if named else "lists no run"
+            ctx.breach(f"a comparison sets two or more runs side by side, and this one {held}", where=record.path,
+                       fix="write a comparison record only for two or more runs, and none for one run's pieces")
+            continue
+        for field in ctx.param("fields"):
+            bare = [run["run"] for run in runs if run.get(field) in (None, "")]
+            if bare:
+                ctx.breach(f"{', '.join(bare)} state{'s' * (len(bare) == 1)} no {field}, so the runs cannot be "
+                           "shown to share it", where=record.path, fix=f"record each run's {field} beside it")
+                continue
+            held = [(run["run"], json.dumps(run[field], sort_keys=True)) for run in runs]
+            if len({value for _, value in held}) > 1:
+                ctx.breach(f"the runs differ in {field}: " + ", ".join(f"{run} has {value}" for run, value in held),
+                           where=record.path, fix=fix)
+
+
+BASIS = MANIFEST + """
+    [rules."validity/same-basis"]
+    fields = ["window", "cost_model", "session"]
+"""
+RUN = {"window": "2020-01-01..2024-12-31", "cost_model": "example", "session": "2026-03-02"}
+
+
+def _compared(world: World, *runs: dict[str, Any], name: str = "a") -> None:
+    """A comparison record of these runs, each the shared basis with its own changes."""
+    if not (world.root / "themis.toml").exists():
+        world.manifest(BASIS)
+    world.write(f"comparisons/{name}.json", json.dumps({"what": "which settings did better",
+                                                         "runs": [{**RUN, **run} for run in runs]}))
+
+
+@proof("validity/same-basis", "two settings compared on one basis", expect="pass")
+def _(world: World) -> None:
+    _compared(world, {"run": "a-1", "settings": "3f9a"}, {"run": "b-1", "settings": "77c0"})
+    _compared(world, {"run": "a-1"}, {"run": "b-1"}, {"run": "c-1", "note": "a third"}, name="b")
+
+
+@proof("validity/same-basis", "runs from two different sessions", expect="fail",
+       contains='the runs differ in session: a-1 has "2026-03-02", b-1 has "2026-03-03"')
+def _(world: World) -> None:
+    _compared(world, {"run": "a-1"}, {"run": "b-1", "session": "2026-03-03"})
+
+
+@proof("validity/same-basis", "a run that does not state its cost model", expect="fail",
+       contains="b-1 states no cost_model")
+def _(world: World) -> None:
+    _compared(world, {"run": "a-1"}, {"run": "b-1", "cost_model": None})
+
+
+@proof("validity/same-basis", "one run cut into years, recorded as a comparison", expect="fail",
+       contains='holds 2 pieces of "a-1": one run cut into pieces, such as by year, is not a comparison')
+def _(world: World) -> None:
+    _compared(world, {"run": "a-1", "window": "2023"}, {"run": "a-1", "window": "2024"})
+
+
+@proof("validity/same-basis", "a run with no id", expect="refuse", contains="comparison.runs[1].run is required")
+def _(world: World) -> None:
+    _compared(world, {"run": "a-1"}, {"settings": "77c0"})

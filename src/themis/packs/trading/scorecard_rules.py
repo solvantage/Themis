@@ -4,7 +4,9 @@ Four rules about what a study publishes beside its numbers: the scorecard and it
 answers about how far the result can be believed, one short page that explains it, and pages that
 render as they were written.
 
-A study is "published" here once it has anything under `results/`.
+A study is "published" here once it has anything under `results/`. `scorecard/believable` and
+`scorecard/explainer` take the kinds of study they bind (`kinds`, every kind when unset) and honour
+`since`: a study whose seal reached the main line before that date is left alone.
 """
 
 from __future__ import annotations
@@ -44,9 +46,43 @@ _CODE_SPAN = re.compile(r"(`+).*?\1")
 _BARE_DOLLAR = re.compile(r"(?<!\\)\$")
 
 
+KINDS = Param("kinds", [str], list(units.KINDS), "larger",
+              "the kinds of study the rule binds, such as strategy; every kind when unset")
+
+
 def _published(ctx: Context) -> list[tuple[str, list[str]]]:
     """The studies that have results, in order."""
     return [(unit, files) for unit, files in sorted(units.studies(ctx).items()) if units.has_results(unit, files)]
+
+
+def _exempt(ctx: Context, unit: str, files: list[str]) -> bool:
+    """True when the rule binds from a date and this study's seal reached the main line before it.
+
+    A local mirror of `_exempt` in gates/order.py, kept to one function until the core shares one.
+    """
+    main = ctx.git.main_ref(ctx.manifest.project.get("main")) if ctx.since is not None else None
+    if main is None:
+        return False
+    arrivals = ctx.git.arrivals(main)
+    position = min((arrivals[name] for name in work.inside(unit, files, units.SEAL) if name in arrivals), default=None)
+    if position is None:
+        return False
+    date = ctx.git.commit_date(ctx.git.main_line(main)[position])
+    return date is not None and date < ctx.since.isoformat()
+
+
+def _bound(ctx: Context) -> list[tuple[str, list[str]]]:
+    """The published studies this rule binds: of a kind it names, and not sealed before its date.
+    A study whose kind cannot be read is bound, so a missing kind never excuses it."""
+    wanted = ctx.param("kinds")
+    unknown = sorted(set(wanted) - set(units.KINDS))
+    if unknown:
+        ctx.refuse(f"kinds names {', '.join(unknown)}, which is not a kind of study", where="themis.toml",
+                   fix=f"name kinds from: {', '.join(units.KINDS)}")
+        return []
+    every = set(units.KINDS) <= set(wanted)
+    return [(unit, files) for unit, files in _published(ctx)
+            if (every or units.kind(ctx, unit, files) in (None, *wanted)) and not _exempt(ctx, unit, files)]
 
 
 def _study(world: World, kind: str = "strategy", seal: str = "", manifest: str = "") -> None:
@@ -196,12 +232,13 @@ def _answers(text: str) -> int | None:
     "scorecard/believable",
     "A published result answers five questions about how far it can be believed.",
     pack="trading",
+    params=(KINDS,),
     learned="A finding was quoted for weeks before anyone asked how many independent cases it rested on.",
 )
 def believable(ctx: Context) -> None:
     fix = (f'add a heading "{QUESTION}" and answer under it, in a numbered list: what the independent unit is; '
            "how many were checked; what could be missed; whether the sources are independent; what is unexplained")
-    for unit, _ in _published(ctx):
+    for unit, _ in _bound(ctx):
         ctx.inspect()
         path = f"{unit}/{units.README}"
         text = ctx.read(path)
@@ -282,6 +319,55 @@ def _(world: World) -> None:
     world.remove(f"{STUDY}/results/metrics.json")
 
 
+def _scoped(world: World, rule_id: str, setting: str, *studies: tuple[str, str, str | None]) -> None:
+    """Studies with results, each (folder, kind, README or None), under one setting of the rule."""
+    world.manifest(MANIFEST + f'\n[rules."{rule_id}"]\n{setting}\n')
+    for unit, kind, readme in studies:
+        world.write(f"{unit}/PRE-REG.md", f"---\nkind: {kind}\n---\nThe plan.\n")
+        world.write(f"{unit}/results/metrics.json", "{}\n")
+        if readme is not None:
+            world.write(f"{unit}/README.md", readme)
+
+
+def _sealed_early(world: World, rule_id: str, since: str, readme: str) -> None:
+    """Study a, merged to main with no README; study b, not merged yet, with this README."""
+    _scoped(world, rule_id, f'since = "{since}"', (STUDY, "strategy", None))
+    world.commit("study a, before the rule binds")
+    _scoped(world, rule_id, f'since = "{since}"', ("work/b", "signal", readme))
+
+
+ANSWERED = f"## {QUESTION}\n\n{FIVE}"
+
+
+@proof("scorecard/believable", "scoped to strategy and signal, a tune study owes no answers", expect="pass")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/believable", 'kinds = ["strategy", "signal"]',
+            (STUDY, "strategy", ANSWERED), ("work/b", "tune", None))
+
+
+@proof("scorecard/believable", "scoped to strategy and signal, a signal study still owes them", expect="fail",
+       contains="this study has results and no README.md")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/believable", 'kinds = ["strategy", "signal"]',
+            (STUDY, "tune", None), ("work/b", "signal", None))
+
+
+@proof("scorecard/believable", "a kind that does not exist", expect="refuse", contains="kinds names stratgy, which")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/believable", 'kinds = ["stratgy"]', (STUDY, "strategy", ANSWERED))
+
+
+@proof("scorecard/believable", "a study sealed before the rule binds is left alone", expect="pass")
+def _(world: World) -> None:
+    _sealed_early(world, "scorecard/believable", "2027-01-01", ANSWERED)
+
+
+@proof("scorecard/believable", "a study sealed on the day the rule binds is held to it", expect="fail",
+       contains="this study has results and no README.md")
+def _(world: World) -> None:
+    _sealed_early(world, "scorecard/believable", "2026-01-01", ANSWERED)
+
+
 # -- scorecard/explainer ------------------------------------------------------------------------
 
 
@@ -292,11 +378,12 @@ def _(world: World) -> None:
     params=(
         Param("max_bytes", int, 200000, "lower", "the most bytes the explainer page may hold"),
         Param("max_controls", int, 2, "lower", "the most controls (inputs, buttons, selects) the explainer may hold"),
+        KINDS,
     ),
     learned="A result was explained by a page of sliders that no newcomer could follow.",
 )
 def explainer(ctx: Context) -> None:
-    for unit, _ in _published(ctx):
+    for unit, _ in _bound(ctx):
         ctx.inspect()
         path = f"{unit}/{EXPLAINER}"
         if not ctx.exists(path):
@@ -398,6 +485,38 @@ def _(world: World) -> None:
 def _(world: World) -> None:
     _study(world)
     world.remove(f"{STUDY}/results/metrics.json")
+
+
+NO_PAGE = "explainer: none - the result is one table of numbers\n"
+
+
+@proof("scorecard/explainer", "scoped to strategy and signal, a tune study owes no page", expect="pass")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/explainer", 'kinds = ["strategy", "signal"]',
+            (STUDY, "strategy", NO_PAGE), ("work/b", "tune", None))
+
+
+@proof("scorecard/explainer", "scoped to strategy and signal, a signal study still owes one", expect="fail",
+       contains="no explainer page")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/explainer", 'kinds = ["strategy", "signal"]',
+            (STUDY, "tune", None), ("work/b", "signal", None))
+
+
+@proof("scorecard/explainer", "a kind that does not exist", expect="refuse", contains="kinds names stratgy, which")
+def _(world: World) -> None:
+    _scoped(world, "scorecard/explainer", 'kinds = ["stratgy"]', (STUDY, "strategy", NO_PAGE))
+
+
+@proof("scorecard/explainer", "a study sealed before the rule binds is left alone", expect="pass")
+def _(world: World) -> None:
+    _sealed_early(world, "scorecard/explainer", "2027-01-01", NO_PAGE)
+
+
+@proof("scorecard/explainer", "a study sealed on the day the rule binds is held to it", expect="fail",
+       contains="no explainer page")
+def _(world: World) -> None:
+    _sealed_early(world, "scorecard/explainer", "2026-01-01", NO_PAGE)
 
 
 # -- scorecard/rendering ------------------------------------------------------------------------

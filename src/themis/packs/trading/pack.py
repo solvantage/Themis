@@ -60,7 +60,7 @@ pack.defaults = _defaults
 
 #: The floor a project holds when it declares this standard. It may tighten anything. The rules
 #: named here keep a result from being chosen after the fact, counted short, shown unseen data
-#: twice, booked at prices that never traded, or decided by hand.
+#: twice, booked at prices that never traded, decided by hand, or shipped trading live.
 pack.standards["themis-trading/1"] = Standard(
     "themis-trading/1",
     levels={rule_id: "enforce" for rule_id in (
@@ -70,7 +70,7 @@ pack.standards["themis-trading/1"] = Standard(
         "trials/settings-counted", "trials/count-feeds-adjustment",
         "holdout/guarded", "holdout/one-signal-look", "holdout/pipeline-look-declared",
         "validity/fills-on-tape", "validity/net-of-cost", "validity/baselines", "validity/power-stated",
-        "validity/audit-reproduced",
+        "validity/audit-reproduced", "validity/same-basis", "live/off-by-default",
         "decision/issued-by-gate", "decision/enough-evidence", "decision/calibrated",
         "scorecard/complete", "scorecard/believable", "report/generated",
     )},
@@ -78,5 +78,6 @@ pack.standards["themis-trading/1"] = Standard(
         "decision/calibrated": {"max_false_alarm": 0.1, "min_power": 0.8},
         "validity/power-stated": {"min_power": 0.8},
         "trials/count-feeds-adjustment": {"penalty": 0},
+        "live/off-by-default": {"absent": "refuse"},
     },
 )

@@ -286,7 +286,8 @@ def tune(metrics: dict[str, Any]) -> Answer:
     and no holdout result yet is "not-confirmed": a refusal, never a pass.
 
     This gate reads outcomes, not prices. Whether a stage pays after costs is decided inside that
-    stage, under the project's risk rules.
+    stage, under the project's risk rules. The model the confirming run used, `confirm_model`, is
+    passed into the numbers as it was given, for `validity/confirm-on-real-ticks` to read.
     """
     if not isinstance(metrics, dict):
         return _refuse("the metrics are not a table")
@@ -303,10 +304,14 @@ def tune(metrics: dict[str, Any]) -> Answer:
     holdout = None if metrics.get("holdout") is None else _passed(metrics["holdout"])
     if metrics.get("holdout") is not None and holdout is None:
         return _refuse("`holdout` must be a table holding `pass`, true or false, or be left out")
+    model = metrics.get("confirm_model")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        return _refuse("`confirm_model` must be the name of the model the confirming run used, or be left out")
 
     stages["walk_back"] = walk["passed"] >= walk["min_pass"]
     numbers = {"settings_tried": tried, "budget": budget, **stages, "walk_back_passed": walk["passed"],
-               "walk_back_total": walk["total"], "walk_back_min_pass": walk["min_pass"], "holdout": holdout}
+               "walk_back_total": walk["total"], "walk_back_min_pass": walk["min_pass"], "holdout": holdout,
+               **({} if model is None else {"confirm_model": model})}
     if tried > budget:
         return _answer("kill", "fail", True, f"{tried} settings were tried, and the sealed budget allowed {budget}",
                        numbers)

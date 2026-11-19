@@ -68,6 +68,7 @@ A study is one folder. The pack reads these files in it, and these records besid
 | Audit | `<study>/AUDIT.md` | Frontmatter: `status`, `script`, `study_code` |
 | Verdict | `decisions/*.json` | The core's decision record: the decision, the verdict, the gate and its version, the date, the numbers |
 | Look | `looks/*.toml` | `window`, `kind` (signal or pipeline), `at`, `grant`, and for a pipeline look its `scope`, `purpose` and `compared_against` |
+| Comparison | `comparisons/**/*.json` | `what` is compared, and `runs`: two or more runs side by side, each with `run` (its id) and the fingerprint fields the project names. Tracked, since a rule cannot see an ignored file |
 
 ## 4. The lifecycle
 
@@ -83,7 +84,7 @@ A study is one folder. The pack reads these files in it, and these records besid
 
 ## 5. The pack's rules
 
-Seventeen rules in five gates, beside the core's.
+Nineteen rules in six gates, beside the core's.
 
 ### Gate: trials — attempts are counted honestly
 
@@ -117,15 +118,22 @@ Seventeen rules in five gates, beside the core's.
 | `validity/power-stated` | A kill states the power it had, and a fail with too little power is recorded as a deferral. | `min_power`; 0.8 when unset |
 | `validity/audit-reproduced` | A study's numbers are decided on only after a separate script reproduces them. | `forbidden`: modules no audit may import |
 | `validity/confirm-on-real-ticks` | A tuning study's confirming run uses the most faithful model the project named. | `confirm_model` under `[trading.tune]` |
+| `validity/same-basis` | A comparison sets side by side only runs that share every fingerprint field the project names. | `fields` |
 
 ### Gate: scorecard — a result a newcomer can read
 
 | Rule | The promise | Parameters |
 | --- | --- | --- |
 | `scorecard/complete` | A study that books trades or predicts ships its scorecard, with no line left unexplained. | — |
-| `scorecard/believable` | A published result answers five questions about how far it can be believed. | — |
-| `scorecard/explainer` | A published result has one short page for a newcomer, or says why it has none. | `max_bytes`, `max_controls` |
+| `scorecard/believable` | A published result answers five questions about how far it can be believed. | `kinds` |
+| `scorecard/explainer` | A published result has one short page for a newcomer, or says why it has none. | `max_bytes`, `max_controls`, `kinds` |
 | `scorecard/rendering` | No page puts two bare dollar signs in one line, and no chart file is oversized. | `max_chart_bytes` |
+
+### Gate: live — nothing trades live by default
+
+| Rule | The promise | Parameters |
+| --- | --- | --- |
+| `live/off-by-default` | Every live-trading switch holds its safe value in the source, unless the owner granted that file its flip. | `switches`, `absent` |
 
 ### Core rules the pack configures
 
@@ -152,17 +160,32 @@ What the rules read, in more detail:
   `costs_paid`.
 - **`validity/power-stated`.** A decision that fails must carry `numbers.mde` and
   `numbers.power`, and the power must reach `min_power`. A gate in this pack records a weak "no"
-  as a deferral by itself; this rule catches a kill written any other way.
+  as a deferral by itself; this rule catches a kill written any other way. A `tune` study's kill is
+  not read: a budget spent or a stage failed is a stage outcome, not a test too weak to see.
 - **`validity/audit-reproduced`.** A `strategy` or `signal` study with a decision needs
   `AUDIT.md` with `status: reproduced` or `differences-explained`, and a `script` in the study
   folder. The script may not be the study's own code and may not import it.
 - **`validity/confirm-on-real-ticks`.** It binds a `tune` study whose decision is a pass: the
-  decision's `numbers.confirm_model` must be the model named under `[trading.tune]`.
+  decision's `numbers.confirm_model` must be the model named under `[trading.tune]`. The `tune`
+  gate copies `confirm_model` from the study's metrics into its numbers, so the metrics name it.
+- **`validity/same-basis`.** Each comparison record must list two or more distinct runs, and
+  every run must state each field in `fields` with the same value as the others. One run cut into
+  pieces, such as a by-year table, is not a comparison and writes no record; a record that holds
+  only one run's pieces fails.
 - **`scorecard/believable`.** The study's README has a heading that holds "How believable is
   this?" with five numbered answers under it: the independent unit, how many were checked, what
   could be missed, whether the sources are independent, and what is unexplained.
 - **`scorecard/explainer`.** The page is `results/explainer/index.html`, with one how-to-read
   box. A study with no page says `explainer: none` in its README, and why.
+- **`live/off-by-default`.** Each switch names `files` (a path pattern), `pattern` (a regular
+  expression read line by line, whose one capture group is the value) and `safe`. Every match in
+  every selected file must hold the safe value. A file that holds another value fails, and says
+  whether it was flipped from the main line or written that way, until the owner runs `themis grant
+  live <file>` for that file. A selected file with no switch is refused, or skipped with `absent =
+  "skip"`. A pattern that matches no file, or has other than one capture group, is refused.
+- **`scorecard/believable` and `scorecard/explainer`** bind every kind of study unless `kinds`
+  names fewer, and a study whose kind cannot be read is always bound. Both honour `since`: a study
+  whose seal reached the main line before that date is left alone.
 
 ## 6. The gate functions
 
@@ -220,8 +243,12 @@ Everything here belongs to the project.
 | `validity/baselines` | `extra` | Further baseline lines the scorecard must carry |
 | `validity/power-stated` | `min_power` | The least power a test must have had for its fail to stand |
 | `validity/audit-reproduced` | `forbidden` | Modules no audit script may import |
+| `validity/same-basis` | `fields` | The fingerprint fields every run in a comparison must share, such as `window`, `settings`, `cost_model` or `session` |
 | `scorecard/explainer` | `max_bytes`, `max_controls` | The caps on the explainer page |
+| `scorecard/believable`, `scorecard/explainer` | `kinds` | The kinds of study the rule binds; every kind when unset |
 | `scorecard/rendering` | `max_chart_bytes` | The cap on one page or picture under `results/` |
+| `live/off-by-default` | `switches` | Each live-trading switch: `files`, `pattern` with one capture group, and its `safe` value |
+| | `absent` | `refuse` (the default: a selected file must hold the switch) or `skip` |
 
 ```toml
 [trading.windows.train]
@@ -247,14 +274,21 @@ confirm_model = "real ticks"
 [rules."validity/power-stated"]
 level = "enforce"
 min_power = 0.9
+
+[rules."live/off-by-default"]
+switches = [{files = "strategies/**/*.py", pattern = '^LIVE\s*=\s*(\w+)', safe = "False"}]
+
+[rules."validity/same-basis"]
+fields = ["window", "cost_model", "session"]
 ```
 
 **The standard.** A project that sets `standard = "themis-trading/1"` under `[project]` says it
 holds this floor. These are all at `enforce`: the order, prereg, trials, holdout and decision
 rules, `ledger/complete`, every validity rule but `validity/confirm-on-real-ticks`,
-`scorecard/complete`, `scorecard/believable`, `report/generated`, `config/locked` and
-`config/no-silent-weakening`. A gate says yes to noise at most one time in ten and finds a
-planted effect at least four times in five. And `min_power` is at least 0.8.
+`live/off-by-default`, `scorecard/complete`, `scorecard/believable`, `report/generated`,
+`config/locked` and `config/no-silent-weakening`. A gate says yes to noise at most one time in ten and finds a
+planted effect at least four times in five. `min_power` is at least 0.8, and
+`live/off-by-default` refuses a file with no switch (`absent = "refuse"`).
 `config/standard-floor` lists every place the project sits below it.
 
 ## 8. What a project's own code uses
@@ -362,5 +396,6 @@ Not built yet:
 Each rule exists because of an incident in a real project: fills at prices that never traded, a
 parameter grid that ran unlogged, sealed data read by agents whose prompts never mentioned the
 seal, a merge that joined a seal to its results, a study that stopped reproducing itself, a kill
-issued by a test with too little power, and tuned settings that passed both test windows and then
-lost on unseen years.
+issued by a test with too little power, tuned settings that passed both test windows and then
+lost on unseen years, two runs ranked against each other on costs from different days, and a
+strategy whose source turned live trading on by default.
