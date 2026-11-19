@@ -129,3 +129,24 @@ class Git:
     def tree_id(self) -> str | None:
         out = self.run("rev-parse", "--verify", "--quiet", "HEAD^{tree}")
         return out.strip() if out else None
+
+    def ignored(self, names: list[str]) -> set[str] | None:
+        """The paths among these that git ignores, as they were given, or None when git cannot say.
+
+        A path need not exist. A tracked file is never ignored, whatever the ignore files say, and
+        a path under an ignored folder is. Give a folder with a trailing slash.
+        """
+        if not names:
+            return set()
+        if not self.is_repo:
+            return None
+        try:
+            done = subprocess.run(
+                ["git", "check-ignore", "--stdin", "-z"], cwd=self.root, input="\0".join(names) + "\0",
+                capture_output=True, text=True, timeout=120, check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+        if done.returncode not in (0, 1):  # 1: nothing among them is ignored
+            return None
+        return {name for name in done.stdout.split("\0") if name}

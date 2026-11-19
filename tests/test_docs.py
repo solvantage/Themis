@@ -56,6 +56,8 @@ def test_each_rules_promise_in_the_document_is_the_rules_own(owner: str) -> None
 
 def test_the_design_counts_the_core_rules_and_gates_as_they_are() -> None:
     core = [rule.id for rule in RULES.values() if rule.pack == "core"]
-    words = {44: "Forty-four", 45: "Forty-five", 46: "Forty-six", 14: "fourteen", 15: "fifteen", 16: "sixteen"}
-    said = f"{words[len(core)]} rules in {words[len({rule_id.split('/')[0] for rule_id in core})]} gates"
-    assert said in (ROOT / "DESIGN.md").read_text(encoding="utf-8")
+    rules, gates_ = len(core), len({rule_id.split("/")[0] for rule_id in core})
+    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+    rules_said = {4: "Forty", 5: "Fifty", 6: "Sixty"}[rules // 10] + (f"-{ones[rules % 10]}" if rules % 10 else "")
+    gates_said = ["fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"][gates_ - 14]
+    assert f"{rules_said} rules in {gates_said} gates" in (ROOT / "DESIGN.md").read_text(encoding="utf-8")

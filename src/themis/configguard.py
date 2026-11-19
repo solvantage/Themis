@@ -111,7 +111,12 @@ def _direction(old: Any, new: Any, stricter: str | None) -> str:
         return "tightening" if tighter else "weakening"
     old, new = _as_set(old), _as_set(new)
     if isinstance(old, dict) and isinstance(new, dict):
-        old, new = sorted(old.items(), key=str), sorted(new.items(), key=str)
+        # A table of sets is compared key by key, so a set inside it moves the way a set does: a
+        # new kind, or a new file in a kind, is a tightening when the stricter direction is larger.
+        added, removed = ("tightening", "weakening") if stricter == "larger" else ("weakening", "tightening")
+        moves = {added if key not in old else removed if key not in new else _direction(old[key], new[key], stricter)
+                 for key in set(old) | set(new)}
+        return "weakening" if "weakening" in moves else "tightening" if "tightening" in moves else "neutral"
     if not isinstance(old, (list, tuple)) or not isinstance(new, (list, tuple)):
         return "weakening"
     added = [item for item in new if item not in old]

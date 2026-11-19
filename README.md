@@ -8,7 +8,7 @@ follows one sealed path, and every guard is proven able to say no.
 It is a generic core. A field plugs in as a **pack**; a project plugs in as a **manifest**. The
 core names no field and no project, and a test keeps it that way.
 
-**Status:** built. The engine, 45 core rules in 15 gates, the agent hooks, the pack interface,
+**Status:** built. The engine, 50 core rules in 17 gates, the agent hooks, the pack interface,
 the trading pack, the marketing content pack and a wrapper for Node check runners all exist,
 and every rule ships proofs that it can fail. What was designed and is not built is listed at the
 end of [DESIGN.md](DESIGN.md) and of each pack's document. Every release, with its commit, its
