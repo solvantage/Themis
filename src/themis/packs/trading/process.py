@@ -20,7 +20,7 @@ import string
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from themis import records
+from themis import records, work
 from themis.packs.trading import data, units
 from themis.rule import Context, Param, proof, rule
 from themis.schema import Choice, Required
@@ -147,7 +147,7 @@ def settings_counted(ctx: Context) -> None:
     studies, logged = units.studies(ctx), units.trials(ctx)
     for unit, files in sorted(studies.items()):
         path = f"{unit}/{ctx.param('history').strip('/')}"
-        if path not in files:
+        if path not in files or _exempt(ctx, unit, files):
             continue
         ctx.inspect()
         versions = _versions(ctx, path, ctx.param("settings_column"))
@@ -164,10 +164,32 @@ def settings_counted(ctx: Context) -> None:
                        fix="log each settings version before it runs: raise the trial's variants, or add a trial")
 
 
+def _exempt(ctx: Context, unit: str, files: list[str]) -> bool:
+    """True when the rule binds from a date and this study's seal reached the main line before it.
+
+    This mirrors `_exempt` in gates/order.py: the same seal, read on the same main line, against the
+    same date. One shared helper is to replace both.
+    """
+    if ctx.since is None:
+        return False
+    main = ctx.git.main_ref(ctx.manifest.project.get("main"))
+    arrivals = ctx.git.arrivals(main) if main else {}
+    position = min((arrivals[name] for name in work.inside(unit, files, units.SEAL) if name in arrivals), default=None)
+    if main is None or position is None:
+        return False
+    date = ctx.git.commit_date(ctx.git.main_line(main)[position])
+    return date is not None and date < ctx.since.isoformat()
+
+
 def _history(world: World, runs: str = "s1 s2 s3", trials: tuple[dict[str, Any], ...] = ({"variants": 3},),
-             column: str = "settings_id") -> None:
-    """A study whose run history holds one run for each settings version named, and its ledger records."""
-    world.manifest(SETUP)
+             column: str = "settings_id", since: str | None = None) -> None:
+    """A study whose run history holds one run for each settings version named, and its ledger records.
+    With `since`, the study is sealed and merged on the main line first, and the rule binds from that date."""
+    rule = f'\n    [rules."trials/settings-counted"]\n    since = "{since}"\n' if since else ""
+    world.manifest(SETUP + rule)
+    if since:
+        world.write("work/a/PRE-REG.md", "---\nkind: tune\n---\n")
+        world.commit("the seal")
     rows = "".join(f"{number},{version}\n" for number, version in enumerate(runs.split(), start=1))
     world.write("work/a/results/run-history.csv", f"run,{column}\n{rows}")
     for number, fields in enumerate(trials, start=1):
@@ -183,6 +205,10 @@ _prove("trials/settings-counted", _history, [
     ("a run history with no settings column", "refuse", "has no column named settings_id", {"column": "preset"}),
     ("a run history that is not CSV", "refuse", "cannot be read as CSV", {"runs": '"s1'}),
     ("a trial whose variants is not a number", "refuse", "not a whole number", {"trials": ({"variants": "a few"},)}),
+    ("a study sealed before the rule's start date is exempt", "refuse", "nothing was inspected",
+     {"trials": ({"variants": 2},), "since": "2027-01-01"}),
+    ("a study sealed after the rule's start date is counted", "fail", "but the ledger counts 2",
+     {"trials": ({"variants": 2},), "since": "2025-01-01"}),
 ])
 
 
@@ -277,7 +303,7 @@ _prove("trials/count-feeds-adjustment", _adjusted, [
       "smallest effect worth seeing.", pack="trading",
       learned="A plan was sealed with no bar in it, and the bar was chosen after the results were in.")
 def declared(ctx: Context) -> None:
-    windows = units.windows(ctx)
+    windows = _all_windows(ctx)
     for unit, files in sorted(units.studies(ctx).items()):
         found = units.seal(ctx, unit, files)
         if found is None:
@@ -293,23 +319,45 @@ def declared(ctx: Context) -> None:
             ctx.breach(fault, where=path, fix=SEAL_FIX)
         named = plan.get("windows") if "windows" in NEEDS[kind] else None
         for name in named if isinstance(named, list) else []:
-            if str(name) not in windows:
-                ctx.breach(f"the seal names the window {name}, which the manifest does not declare", where=path,
-                           fix="name a window declared under [trading.windows], or declare this one there")
+            if str(name) not in windows.of(unit):
+                ctx.breach(f"the seal names the window {name}, which the manifest does not declare and this "
+                           "study does not either", where=path,
+                           fix=f"declare it under [trading.windows], or give the study its own: "
+                               f"{data.PREFIX}{name}: {{from = \"...\", to = \"...\"}} in the seal")
+    for where, _, problem in windows.problems:  # a window declared two ways, or one that cannot be read
+        ctx.inspect()
+        ctx.breach(problem, where=where, fix="declare each window id once, the same way wherever it is declared; "
+                                             "a window with other dates takes an id of its own")
 
 
-def _sealed(world: World, file: str = "PRE-REG.md", fence: str = "---", **changes: Any) -> None:
+def _sealed(world: World, file: str = "PRE-REG.md", fence: str = "---", extra: str = "", **changes: Any) -> None:
     """A study whose seal states all a strategy needs, apart from the changes. None leaves a field out."""
     fields = {"kind": "strategy", "binding": "the net figure beats the shuffled null in the test window",
               "gate": "direction", "nulls": "[shuffled, always-long, always-short]", "windows": "[train, holdout]",
               "mde": 0.2, **changes}
     lines = [f"{key}: {value}" for key, value in fields.items() if value is not None]
-    world.manifest(SETUP)
+    world.manifest(SETUP + extra)
     world.write(f"work/a/{file}", "\n".join([fence, *lines, fence, "", "The plan, in words.", ""]))
 
 
 BARE = {"binding": None, "gate": None, "nulls": None, "windows": None, "mde": None}
 TUNE = {"kind": "tune", "binding": None, "nulls": None, "mde": None, "iterations": 50, "risk_rules": "rules/risk.json"}
+OOS = '{from = "2025-01-01", to = "2025-12-31", sealed = true}'  # a study's own sealed window, shared by its siblings
+OWN = {**TUNE, "windows": "[train, oos]", "window-oos": OOS}
+
+
+def _sibling(window: str = OOS, study: str = "work/b", name: str = "oos") -> dict[str, str]:
+    """The seal of a sibling study that declares its own window, oos unless named, as given."""
+    return {f"{study}/PRE-REG.md": f"---\nkind: tune\nwindows: [train, {name}]\nwindow-{name}: {window}\n"
+                                    "gate: tune\niterations: 9\nrisk_rules: r.json\n---\n"}
+
+
+STUDY_TABLE = """
+    [trading.studies."work/a".windows.oos]
+    from = "2025-01-01"
+    to = "2025-12-31"
+    sealed = true
+"""
 _prove("prereg/declared", _sealed, [
     ("a strategy seal that states its whole plan", "pass", None, {}),
     ("a data study states its kind and nothing more", "pass", None, {"kind": "data", **BARE}),
@@ -323,6 +371,23 @@ _prove("prereg/declared", _sealed, [
     ("a smallest effect of zero", "fail", "mde in the seal of this strategy study must be", {"mde": 0}),
     ("a tune seal with no iteration budget", "fail", "does not state iterations", {**TUNE, "iterations": None}),
     ("a tune budget of two and a half", "fail", "study must be a whole number above 0", {**TUNE, "iterations": 2.5}),
+    ("a tune seal that declares its own windows", "pass", None,
+     {**OWN, "windows": "[is-2019, oos]", "window-is-2019": "{from = 2019-01-01, to = 2023-12-31}"}),
+    ("a study table in the manifest gives the study its own window", "pass", None,
+     {**TUNE, "windows": "[train, oos]", "extra": STUDY_TABLE}),
+    ("sibling studies declare one window the same way", "pass", None, {**OWN, "files": _sibling()}),
+    ("a study gives a window of the project's other dates", "fail", "one window id names one window",
+     {**OWN, "window-holdout": '{from = "2023-01-01", to = "2024-12-31", sealed = true}'}),
+    ("a sibling declares a shared window with other dates", "fail", "as 2025-01-01 to 2025-12-31, sealed",
+     {**OWN, "files": _sibling('{from = "2025-02-01", to = "2025-12-31", sealed = true}')}),
+    ("a study table and the seal declare one window two ways", "fail", "one window id names one window",
+     {**OWN, "window-oos": '{from = "2025-01-01", to = "2025-12-31"}', "extra": STUDY_TABLE}),
+    ("a window in the seal that is not an inline table", "fail", "window-oos must be an inline table",
+     {**OWN, "window-oos": "2025-01-01 to 2025-12-31"}),
+    ("a window in the seal with no end date", "fail", "window-oos.to is required",
+     {**OWN, "window-oos": '{from = "2025-01-01", sealed = true}'}),
+    ("a window only a sibling study declares", "fail", "this study does not either",
+     {**TUNE, "windows": "[train, oos]", "files": _sibling()}),
     ("a seal with no frontmatter block", "refuse", "no frontmatter block", {"fence": ""}),
     ("no study is sealed yet", "refuse", "nothing was inspected", {"file": "notes.md"}),
 ])
@@ -373,12 +438,18 @@ _prove("prereg/provenance", _ran, [
 # -- holdout/guarded ----------------------------------------------------------------------------
 
 
-def _windows(ctx: Context) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """The declared data windows, and the names of the sealed ones. Stops the rule when none is sealed."""
-    found = units.windows(ctx)
-    sealed = sorted(name for name, window in found.items() if data.is_sealed(window))
+def _all_windows(ctx: Context) -> data.Windows:
+    """Every data window: the project's, and those each study declares in its seal or study table."""
+    return data.collect(ctx.manifest, ctx.all_files, ctx.read)
+
+
+def _windows(ctx: Context) -> tuple[data.Windows, list[str]]:
+    """The declared data windows, and the ids of the sealed ones. Stops the rule when none is sealed."""
+    found = _all_windows(ctx)
+    sealed = found.sealed()
     if not sealed:
-        ctx.not_configured("mark a data window as sealed: sealed = true under [trading.windows.<name>]")
+        ctx.not_configured("mark a data window as sealed: sealed = true under [trading.windows.<name>], "
+                           "or in a study's own window")
     return found, sealed
 
 
@@ -395,20 +466,24 @@ def guarded(ctx: Context) -> None:
     spent = data.first_uses(looks)  # a grant is spent by the first look that names it
     for look in looks:
         name, grant = look.get("window"), (look.get("grant") or "").strip() or None
-        if name in windows and name not in sealed:
+        study = look.get("study") if isinstance(look.get("study"), str) else None
+        if name in windows.of(study) and name not in sealed:
             continue  # a window that is not sealed needs no grant
         ctx.inspect()
-        if name not in windows:
-            ctx.breach(f"this look names the window {name}, which the manifest does not declare", where=look.path,
-                       fix="name a window declared under [trading.windows], or declare this one there")
+        if name not in windows.of(study):
+            whose = f" and its study {study} does not either" if study else ""
+            ctx.breach(f"this look names the window {name}, which the manifest does not declare{whose}",
+                       where=look.path, fix="name a window the manifest or the study declares, or declare this one")
             continue
         earlier = spent.get(grant) if spent.get(grant) != look.path else None
-        problem = data.grant_problem(grants, grant, name, earlier)
+        targets = windows.targets(study, name)
+        problem = data.grant_problem(grants, grant, targets, earlier)
         if problem:
             ctx.breach(f"this look read the sealed window {name} with no grant that opens it: {problem}",
                        where=look.path, fix=f"tell the owner the window was read; before each look the owner runs "
-                                            f"`themis grant {data.ACTION} {name} --reason ...`, and the look goes "
-                                            "through data.window")
+                                            f"`themis grant {data.ACTION} {targets[0]} --reason ...`, and the look "
+                                            f"goes through `themis act {data.ACTION} {targets[0]} -- ...` or "
+                                            "data.window")
 
 
 GRANT = {"action": "holdout", "target": "holdout", "granted_by": "owner", "granted_at": "2026-01-01T09:00:00+00:00",
@@ -416,6 +491,10 @@ GRANT = {"action": "holdout", "target": "holdout", "granted_by": "owner", "grant
 TWO = {"looks": ({}, {}), "grants": ({}, {})}  # a second look, with a grant of its own
 PIPELINE = {"kind": "pipeline", "scope": "the first 50 rows", "purpose": "show the loader reads the sealed files",
             "compared_against": "the row counts in the data inventory", "forward_returns": False}
+
+
+SEALS = {**_sibling(study="work/a"), **_sibling()}  # two sibling studies that share the sealed window oos
+AT_OOS = {"window": "oos", "study": "work/a"}
 
 
 def _holdout(world: World, looks: tuple[dict[str, Any], ...] = ({},), grants: tuple[dict[str, Any], ...] = ({},),
@@ -441,9 +520,28 @@ _prove("holdout/guarded", _holdout, [
     ("a grant for another window", "fail", "is for the target train, not holdout", {"grants": ({"target": "train"},)}),
     ("one grant used for two looks", "fail", "g1 was already used by the look", {"looks": ({}, {"grant": "g1"})}),
     ("a look at a window nobody declared", "fail", "the manifest does not declare", {"looks": ({"window": "live"},)}),
+    ("a study's look at its own sealed window, with a grant for the study and the window", "pass", None,
+     {"looks": (AT_OOS,), "grants": ({"target": "work/a/oos"},), "files": SEALS}),
+    ("a study's look at a window of the project's, with a grant for the study and the window", "pass", None,
+     {"looks": ({"study": "work/a"},), "grants": ({"target": "work/a/holdout"},)}),
+    ("a grant for a sibling's look does not open this study's", "fail", "for the target work/b/oos, not work/a/oos",
+     {"looks": (AT_OOS,), "grants": ({"target": "work/b/oos"},), "files": SEALS}),
+    ("a grant for the window alone does not open a study's own window", "fail", "for the target oos, not work/a/oos",
+     {"looks": (AT_OOS,), "grants": ({"target": "oos"},), "files": SEALS}),
+    ("a look at a study's own window that names no study", "fail", "which the manifest does not declare",
+     {"looks": ({"window": "oos"},), "grants": ({"target": "oos"},), "files": SEALS}),
     ("a look record that cannot be read", "refuse", "is not valid TOML", {"files": {"looks/l2.toml": 'window = "x\n'}}),
     ("nobody has looked at a sealed window yet", "refuse", "nothing was inspected", {"looks": ()}),
 ])
+
+
+@proof("grant/required", "a project's own guarded list that keeps holdout still fails a look with no grant",
+       expect="fail", contains="the guarded action holdout ran on holdout with no grant")
+def _(world: World) -> None:
+    """A stated list replaces the pack's default one, so a project that lists its own keeps holdout in it."""
+    world.manifest(SETUP + '\n    [rules."grant/required"]\n    guarded = ["publish", "holdout"]\n')
+    world.write("receipts/action/a1.json", json.dumps(
+        {"kind": "action", "action": "holdout", "target": "holdout", "at": "2026-01-02T10:00:00+00:00"}))
 
 
 # -- holdout/one-signal-look --------------------------------------------------------------------
@@ -453,10 +551,11 @@ _prove("holdout/guarded", _holdout, [
       learned="Settings were tried on the unseen years again and again until they passed, and then lost.")
 def one_signal_look(ctx: Context) -> None:
     windows, sealed = _windows(ctx)
+    ids = windows.ids()  # a window id shared by sibling studies is one window: their looks count together
     looks = [look for look in _looks(ctx) if look.get("kind") == "signal"]
     for name in sealed:
         ctx.inspect()
-        allowed = max(windows[name].get("looks", 1), 0)
+        allowed = max(ids[name].get("looks", 1), 0)
         taken = [look for look in looks if look.get("window") == name]
         for number, look in enumerate(taken[allowed:], start=allowed + 1):
             ctx.breach(f"this is signal look number {number} at the sealed window {name}, which allows {allowed}",
@@ -470,6 +569,13 @@ _prove("holdout/one-signal-look", _holdout, [
     ("two looks at a window that allows two", "pass", None, {**TWO, "extra": "    looks = 2\n"}),
     ("a signal look at a window that is not sealed is not counted", "pass", None, {"looks": ({}, {"window": "train"})}),
     ("a second signal look at a window that allows one", "fail", "signal look number 2 at the sealed window", TWO),
+    ("windows of their own, one look at each", "pass", None,
+     {**TWO, "looks": (AT_OOS, {"window": "oos-b", "study": "work/b"}),
+      "files": {**_sibling(study="work/a"), **_sibling(name="oos-b")}}),
+    ("sibling studies share a window, and their looks count together", "fail",
+     "signal look number 2 at the sealed window oos",
+     {"looks": (AT_OOS, {"window": "oos", "study": "work/b"}),
+      "grants": ({"target": "work/a/oos"}, {"target": "work/b/oos"}), "files": SEALS}),
     ("a look whose kind is neither", "refuse", "must be one of signal, pipeline", {"looks": ({"kind": "peek"},)}),
 ])
 

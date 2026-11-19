@@ -113,7 +113,3 @@ def decisions(ctx: Context) -> dict[str, list[Any]]:
 def trials(ctx: Context) -> dict[str, list[Any]]:
     """The ledger records, grouped by the study folder they name."""
     return _by_work(ctx.records("ledger"))
-
-
-def windows(ctx: Context) -> dict[str, dict[str, Any]]:
-    return ctx.manifest.table("trading").get("windows", {})

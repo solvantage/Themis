@@ -6,10 +6,11 @@ instrument, a venue, an engine or a project: those are a project's parameters.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from themis.pack import Pack, Standard, register
-from themis.packs.trading import units
+from themis.packs.trading import data, units
 from themis.schema import ANY, Required
 
 SEAL, RESULTS = units.SEAL, units.RESULTS
@@ -21,7 +22,8 @@ pack = register(Pack(
     name="trading",
     schema={
         "work": str,  # the folders that each hold one study, such as research/experiments/*
-        "windows": {"*": {"from": Required(str), "to": Required(str), "sealed": bool, "looks": int}},
+        "windows": {"*": data.WINDOW},
+        "studies": {"*": {"windows": {"*": data.WINDOW}}},  # a study's own windows, keyed by its folder
         "costs": {"*": {"derivation": Required(str), "*": ANY}},
         "tune": {"risk_rules": str, "iterations": int, "confirm_model": str},
     },
@@ -34,15 +36,33 @@ pack = register(Pack(
 ))
 
 
+_SEALED: list[tuple[Any, bool]] = []  # the last few manifests asked about, and whether they seal a window
+
+
+def _seals_a_window(manifest: Any) -> bool:
+    """True when any window is sealed: the project's, a study table's or one a study's seal declares.
+
+    The seals are read from the disk, so the answer is kept for the last few manifests asked about:
+    the core asks once for every rule of a run.
+    """
+    for held, answer in _SEALED:
+        if held is manifest:
+            return answer
+    table, root = manifest.table("trading"), Path(manifest.root)
+    found = [path.relative_to(root).as_posix() for pattern in data.studies_patterns(table.get("work"))
+             for seal in SEAL for path in root.glob(f"{pattern.strip('/')}/{seal}") if path.is_file()]
+    answer = bool(data.collect(manifest, found, data.reader(root)).sealed())
+    _SEALED[:] = [(manifest, answer), *_SEALED[:7]]
+    return answer
+
+
 def _defaults(manifest: Any) -> dict[str, dict[str, Any]]:
     """What the core's rules mean in trading: the pre-registration is the seal, everything under
     results/ is a result, the report page is built and never typed, and a look at a sealed window
-    is an action that needs the owner's grant."""
+    is an action that needs the owner's grant. A project that states its own guarded list replaces
+    this one, so it keeps `holdout` in it."""
     table = manifest.table("trading")
-    windows = table.get("windows", {})
-    sealed = isinstance(windows, dict) and any(isinstance(window, dict) and window.get("sealed") is True
-                                               for window in windows.values())
-    found: dict[str, dict[str, Any]] = {"grant/required": {"guarded": [HOLDOUT]}} if sealed else {}
+    found: dict[str, dict[str, Any]] = {"grant/required": {"guarded": [HOLDOUT]}} if _seals_a_window(manifest) else {}
     work = table.get("work")
     if work:
         found.update({
@@ -57,6 +77,7 @@ def _defaults(manifest: Any) -> dict[str, dict[str, Any]]:
 
 
 pack.defaults = _defaults
+pack.actions[HOLDOUT] = data.act  # `themis act holdout <study>/<window>` writes the look the holdout rules count
 
 #: The floor a project holds when it declares this standard. It may tighten anything. The rules
 #: named here keep a result from being chosen after the fact, counted short, shown unseen data

@@ -436,11 +436,19 @@ A **grant** replaces all three.
 | 1 | The owner runs `themis grant <action> <target>`, with a ceiling when the action spends. |
 | 2 | The shipped hook stops every `themis grant` command for the owner's click. An exact command name is easy to match and easy to attack-test. |
 | 3 | The command writes a grant file under `grants/`. It is committed, so it is visible in review. |
-| 4 | The guarded code checks that the grant is for this action and target and is unused, then writes an action receipt that names it. |
+| 4 | The guarded code checks that the grant is for this action and target and is unused, then writes an action receipt that names it. `themis act <action> <target> -- <command>` does this for any command: it spends the grant, writes the receipt and only then runs the command. |
 | 5 | `grant/required` compares the receipts with the grants. A guarded action with no grant fails. `grant/single-use` fails a grant named by two actions. |
 
 There is no value an agent can type to open a guarded action. It needs a file that only an
-approved command creates. Which actions are guarded is a pack's or a project's choice.
+approved command creates. Which actions are guarded is a pack's or a project's choice. A project
+that states its own `guarded` list replaces the pack's, so it keeps the pack's actions in it.
+
+A delete or a spend that runs inside a script is out of a hook's sight. `themis act` gives the
+command it runs a token in `THEMIS_ACT_TOKEN`; the script calls `themis act --verify <action>
+<target>` first and stops on anything but exit 0. The token is good only while its act runs, for
+its own action and target, and its receipt holds only its hash. A pack may write records of its
+own for an action before the command starts: the trading pack writes the look a sealed window's
+rules count.
 
 An **attestation** is the grant's quieter sibling. Some checks need eyes: does the footage look
 right, did a separate reader agree, did the owner sign the plan. Each such row names its judge.
@@ -503,6 +511,7 @@ fails a project whose pack falls short.
 | End of turn | Runs `themis check` against the main line. A new breach keeps the turn open. The host gives it 300 seconds. |
 | `--reporter=json` | One object per breach: rule id, location, why the rule exists, and the command that fixes it. |
 | `themis explain <rule>` | The rule's promise, the incident behind it, and a worked fix. |
+| `themis act` | Runs a guarded command only with the owner's unspent grant. A script that deletes or spends checks `themis act --verify` first, so it refuses to run where no hook can see it. |
 | `themis render` | Writes the pages listed under `[views]`, and the rules section of the instructions file named under `[agents]`. |
 
 **Deny the capability before writing the rule.** Where a tool can be taken away from an agent,
@@ -620,6 +629,7 @@ The full contract, with the pack interface and the pack test kit, is in
 | `themis decide UNIT --gate GATE` | Ask a gate for the decision and store it; `--by owner` records the owner's own call |
 | `themis report UNIT` | Build a unit's report with its pack's builder |
 | `themis grant ACTION [TARGET]`, `themis attest FILE ROW` | The owner's yes; a judge's statement |
+| `themis act ACTION TARGET -- COMMAND` | Run a guarded command with an unspent grant: spend it, write the action receipt, then run; `--verify` from inside the command exits 0 only under `act` |
 | `themis cite WORK KEY` | Print a number with its tag, ready to paste |
 | `themis checkpoint` | Rewrite the facts in the checkpoint's headline |
 | `themis render [--check]` | Write the generated pages, or fail when one is stale |

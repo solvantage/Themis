@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import tomllib
 from pathlib import Path
 
@@ -271,3 +272,93 @@ def test_with_no_sealed_window_the_holdout_rules_are_not_configured(tmp_path: Pa
         result = judged(world, rule_id)
         assert (result.status, result.verdict) == ("not configured", None), rule_id
         assert "sealed = true" in result.note
+
+
+# -- a study's own windows -----------------------------------------------------------------------
+
+OWN = '{from = "2025-01-01", to = "2025-12-31", sealed = true}'
+
+
+def seal(world: World, study: str = "work/a", **windows: str) -> None:
+    """A study's seal that declares its own windows, each as an inline table, and reads them and train."""
+    names = ", ".join(["train", *windows])
+    lines = [f"window-{name}: {table}" for name, table in windows.items()]
+    plan = ["kind: tune", f"windows: [{names}]", *lines, "gate: tune", "iterations: 9", "risk_rules: r.json"]
+    world.write(f"{study}/PRE-REG.md", "\n".join(["---", *plan, "---", ""]))
+
+
+def test_a_study_reads_its_own_sealed_window_with_a_grant_for_the_study_and_the_window(tmp_path: Path) -> None:
+    world = project(tmp_path)
+    seal(world, oos=OWN)
+    grant(world, target="work/a/oos")
+    assert ask(world, "oos", grant="g1", study="work/a") == ("2025-01-01", "2025-12-31")
+    assert read(world, looks(world)[0])["study"] == "work/a"
+    receipt = json.loads(next((world.root / "receipts/action").glob("*.json")).read_text())
+    assert (receipt["action"], receipt["target"], receipt["grant"]) == ("holdout", "work/a/oos", "g1")
+    for rule_id in (*HOLDOUT_RULES[:2], "grant/required", "grant/single-use", "prereg/declared"):
+        assert judged(world, rule_id).verdict is Verdict.PASS, rule_id
+
+
+def test_a_project_window_opens_with_a_grant_for_the_study_too(tmp_path: Path) -> None:
+    world = project(tmp_path)
+    grant(world, target="work/a/holdout")
+    assert ask(world, grant="g1", study="work/a") == HOLDOUT
+    assert judged(world, "holdout/guarded").verdict is Verdict.PASS
+
+
+@pytest.mark.parametrize(("target", "study", "said"), [
+    ("oos", "work/a", "is for the target oos, not work/a/oos"),
+    ("work/b/oos", "work/a", "is for the target work/b/oos, not work/a/oos"),
+])
+def test_a_study_s_own_window_needs_a_grant_for_that_study(tmp_path: Path, target: str, study: str, said: str) -> None:
+    world = project(tmp_path)
+    seal(world, oos=OWN)
+    seal(world, "work/b", oos=OWN)
+    grant(world, target=target)
+    with pytest.raises(data.SealedWindow, match=said):
+        ask(world, "oos", grant="g1", study=study)
+    assert looks(world) == []
+
+
+def test_another_study_s_window_is_not_this_study_s(tmp_path: Path) -> None:
+    world = project(tmp_path)
+    seal(world, "work/b", oos=OWN)
+    grant(world, target="work/a/oos")
+    with pytest.raises(KeyError, match="the study work/a declares none of its own"):
+        ask(world, "oos", grant="g1", study="work/a")
+
+
+@pytest.mark.parametrize("declared", [
+    {"holdout": '{from = "2023-01-01", to = "2024-12-31", sealed = true}'},  # the project's id, other dates
+    {"train": '{from = "2015-01-01", to = "2021-12-31", seeled = true}'},    # a mistyped seal
+    {"train": "2015-01-01 to 2021-12-31"},                                   # not a table
+])
+def test_a_window_declared_two_ways_or_unreadably_is_not_opened(tmp_path: Path, declared: dict) -> None:
+    world = project(tmp_path)
+    seal(world, **declared)
+    grant(world, target=f"work/a/{next(iter(declared))}")
+    with pytest.raises(data.SealedWindow, match="was not opened"):  # a mistyped seal never opens a window
+        ask(world, next(iter(declared)), grant="g1", study="work/a")
+    assert looks(world) == []
+    assert judged(world, "prereg/declared").verdict is Verdict.FAIL
+
+
+def test_sibling_studies_that_share_a_window_count_their_looks_together(tmp_path: Path) -> None:
+    world = project(tmp_path)
+    seal(world, oos=OWN)
+    seal(world, "work/b", oos=OWN)
+    grant(world, "g1", target="work/a/oos")
+    grant(world, "g2", target="work/b/oos")
+    ask(world, "oos", grant="g1", study="work/a")
+    assert judged(world, "holdout/one-signal-look").verdict is Verdict.PASS
+    ask(world, "oos", grant="g2", study="work/b", now=NOON + dt.timedelta(days=1))
+    assert judged(world, "holdout/guarded").verdict is Verdict.PASS
+    assert judged(world, "holdout/one-signal-look").verdict is Verdict.FAIL
+
+
+def test_a_window_sealed_only_in_a_study_s_seal_puts_holdout_under_grant_required(tmp_path: Path) -> None:
+    world = project(tmp_path, MANIFEST.replace("    sealed = true\n", ""))
+    rule = next(rule for rule in manifests.load(world.root).active_rules() if rule.id == "grant/required")
+    assert manifests.load(world.root).setting(rule).params["guarded"] is None
+    seal(world, oos=OWN)
+    assert manifests.load(world.root).setting(rule).params["guarded"] == ["holdout"]
