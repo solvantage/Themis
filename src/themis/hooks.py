@@ -55,10 +55,12 @@ SAFE_MODE = "allow-safe"
 #: one of these, past every link, and neither inside the project nor above it, is safe.
 TEMP = manifests.TEMP_FOLDERS
 UNREADABLE = "Themis cannot read this command, so it cannot say it is safe."
-#: Guarded in allow-safe as well as the protected paths: the host's settings and hooks, and git's
-#: own folder, whose hooks and configuration run programs on the next git command. (git in a
-#: repository nested inside the project is never on the safe list.)
-GUARDED = (".claude/**", ".githooks/**", ".git", ".git/**")
+#: Guarded in allow-safe as well as the protected paths: the host's settings and the servers it
+#: starts, the git hooks and the hook managers' files, the hook's own state, and every `.git`,
+#: whose hooks and configuration run programs on the next git command.
+GUARDED = (".claude/**", ".mcp.json", ".githooks/**", ".husky/**", ".pre-commit-config.yaml", "lefthook.yml",
+           "lefthook.yaml", ".lefthook.yml", ".lefthook.yaml", "lefthook-local.yml", "lefthook-local.yaml",
+           ".themis/**", "**/.git", "**/.git/**")
 #: The host's settings files outside the project. In allow-safe they are guarded, and their ask
 #: and deny lists are read with the project's.
 USER_SETTINGS = ("settings.json", "settings.local.json")
@@ -147,11 +149,15 @@ def policy(root: Path) -> Policy:
     agents = manifest.table("agents")
     mode = agents.get("pretool", "ask")
     safe = mode == SAFE_MODE
-    inside, outside = [], [str(path) for path in _user_settings()]
+    inside, outside = [], _host_config()
     if safe:
-        # The folder git runs its hooks from, wherever it is: a hook written there runs on the next commit.
+        # The folder git runs its hooks from, wherever it is: a hook written there runs on the next
+        # commit. A manager's stub folder (husky's `.husky/_`) runs the files beside it, so its
+        # parent is guarded too.
         for folder in (agents.get("git_hooks"), _git(root, "config", "--get", "core.hooksPath").stdout.strip()):
             real = _real(folder, root) if folder else None
+            if real is not None and os.path.basename(real) == "_":
+                real = os.path.dirname(real)
             name = None if real is None else _within(real, os.path.realpath(root))
             if name:
                 inside.append(f"{name}/**")
@@ -176,12 +182,26 @@ def _guarded(real: str, outside: Iterable[str]) -> bool:
     return any(_within(real, guarded) is not None or _within(guarded, real) is not None for guarded in outside)
 
 
-def _user_settings() -> list[Path]:
-    """The host's settings files in the user's own folder ($CLAUDE_CONFIG_DIR, else ~/.claude)."""
+def _host_folder() -> str | None:
+    """The host's folder in the user's home ($CLAUDE_CONFIG_DIR, else ~/.claude), or None."""
     folder = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
-    if folder.startswith("~"):
-        return []  # no home folder to name
-    return [Path(os.path.realpath(os.path.join(folder, name))) for name in USER_SETTINGS]
+    return None if folder.startswith("~") else os.path.realpath(folder)
+
+
+def _user_settings() -> list[Path]:
+    """The host's settings files in the user's own folder."""
+    folder = _host_folder()
+    return [] if folder is None else [Path(folder, name) for name in USER_SETTINGS]
+
+
+def _host_config() -> list[str]:
+    """What configures the host in the user's home, guarded in allow-safe: its whole folder, and
+    `~/.claude.json`, which names the servers it starts."""
+    folder, home = _host_folder(), os.path.expanduser("~")
+    found = [folder] if folder else []
+    if not home.startswith("~"):
+        found.append(os.path.realpath(os.path.join(home, ".claude.json")))
+    return found
 
 
 #: What each mode does, as `themis doctor` and `themis hooks install` say it.
@@ -243,8 +263,11 @@ def _relative(word: str, root: Path, cwd: Path | None = None) -> str | None:
 
 def _holders(pattern: str) -> tuple[list[str], bool]:
     """The folders that hold what a path pattern names, and True when any folder may hold one
-    (the pattern starts with a wildcard)."""
+    (the pattern starts with a wildcard). A pattern such as `**/.git` names a folder wherever it
+    is; only the path itself, or a path inside it, touches it."""
     parts = pattern.casefold().strip("/").split("/")
+    if parts[0] == "**" and len(parts) > 1 and not any(char in parts[1] for char in "*?["):
+        return [], False
     lead = []
     for part in parts:
         if any(char in part for char in "*?["):
@@ -338,9 +361,11 @@ class _Line:
     mutated: bool = False  # a command that may change the files ran: no later `cd` is followed
     moved: bool = False  # a `cd` was followed in the current `&&` chain
     tree_changed: bool = False  # a command that may make links ran: no later write or delete is safe
+    made_folders: bool = False  # a folder was made: no later git is safe, since it may be a repository
+    made: list[str] = field(default_factory=list)  # the folders made, past links: nothing written under them is safe
 
     def child(self) -> _Line:
-        return _Line(self.cwd, self.mutated, False, self.tree_changed)
+        return _Line(self.cwd, self.mutated, False, self.tree_changed, self.made_folders, self.made)
 
 
 @dataclass(frozen=True)
@@ -430,12 +455,18 @@ def _simple(simple: Simple, before: str, after: str, line: _Line, ctx: _Context,
         line.mutated = True
     if not safe or _rewrites_tree(simple):
         line.tree_changed = True
+    if not safe or program == "mkdir" or _rewrites_tree(simple):
+        line.made_folders = True
+    if program == "mkdir":
+        line.made += [real for word in simple.words[1:] if not word.text.startswith("-")
+                      for real in [_real(word.text, line.cwd)] if real is not None]
 
 
 def _cd(simple: Simple, before: str, after: str, line: _Line, ctx: _Context) -> Path | None:
     """The folder a `cd` moves to, when it can be proven: a bare `cd DIR` with at most -L or -P, a
     literal folder that exists and can be entered, not in a pipe or after `||`, with nothing before
-    it in the line that could have changed the files."""
+    it in the line that could have changed the files. Without -P the shell reads `..` against the
+    path as written, not past its links, so a `..` then is not followed."""
     if (line.cwd is None or line.mutated or _piped(before) or _piped(after) or before == "||"
             or simple.words[0].raw != "cd"):
         return None
@@ -446,6 +477,9 @@ def _cd(simple: Simple, before: str, after: str, line: _Line, ctx: _Context) -> 
     if len(operands) != 1 or operands[0].startswith("-"):
         return None
     target = operands[0]
+    physical = [word.text for word in rest if word.text in ("-L", "-P")][-1:] == ["-P"]
+    if ".." in target.split("/") and not physical:
+        return None
     if ctx.cdpath and not os.path.isabs(target) and not target.startswith(("./", "../")) and target not in (".", ".."):
         return None
     real = _real(target, line.cwd)
@@ -455,14 +489,19 @@ def _cd(simple: Simple, before: str, after: str, line: _Line, ctx: _Context) -> 
 
 
 def _command_texts(simple: Simple, line: _Line, ctx: _Context) -> list[str]:
-    """A simple command as the patterns see it: as written, from its program on, and with its
-    program's path read from the project's root."""
+    """A simple command as the patterns see it: as written, from its program on, with its
+    program's path read from the project's root, and for git with its global options taken out,
+    so `git -C . push` is still `git push`."""
     words = [word.text for word in simple.words]
     found = [" ".join(word.text for word in (*simple.assigns, *simple.words))]
     start = _start(words)
     if start < len(words):
         found.append(" ".join(words[start:]))
         found += _program_texts(words[start:], line, ctx)
+        if os.path.basename(words[start]) == "git":
+            sub, rest = _git_subcommand(words[start + 1:])
+            if sub:
+                found.append(" ".join(["git", sub, *rest]))
     return [text for text in found if text]
 
 
@@ -838,8 +877,10 @@ def _git_local(sub: str, rest: list[str], flags: list[str], cwd: Path | None) ->
     if sub in ("checkout", "switch") and any(_long(flag, "force", "discard-changes") or _short(flag, "fBC") for flag in flags):
         return "This command throws away work."
     if sub == "checkout":
-        operands = _operands(rest)
-        if "." in rest or ("--" in rest and rest.index("--") + 1 < len(rest)) or len(operands) >= 2 or (
+        named = {rest[index + 1] for index, word in enumerate(rest[:-1]) if word in ("-b", "-B", "--orphan")}
+        operands = [operand for operand in _operands(rest) if operand not in named]
+        if "." in rest or ("--" in rest and rest.index("--") + 1 < len(rest)) or len(operands) >= 2 or any(
+                operand.startswith(":") or any(char in operand for char in "*?[") for operand in operands) or (
                 cwd is not None and any(os.path.lexists(os.path.join(cwd, operand)) for operand in operands)):
             return "This command throws away work."
     if sub == "restore":
@@ -1025,6 +1066,8 @@ def _writable(word: Word, line: _Line, ctx: _Context) -> bool:
     real = _real(word.text, line.cwd)
     if real is None or _guarded(real, ctx.policy.outside):
         return False
+    if any(_within(real, made) for made in line.made):
+        return False  # under a folder this line made: what it holds is not known when the hook reads
     if ctx.temp and _scratch(real, ctx.home, ctx.temp):
         return True
     name = _within(real, ctx.home)
@@ -1099,6 +1142,12 @@ def _sed(args: list[Word], line: _Line, ctx: _Context) -> bool:
     return all(SED_SCRIPT.fullmatch(script.strip()) for script in scripts)
 
 
+def _printf(args: list[Word], line: _Line, ctx: _Context) -> bool:
+    """printf with a plain format first: no option, so never `-v`, which sets a shell variable. The
+    values after the format may come from substitutions, which are read in turn."""
+    return bool(args) and args[0].literal and not args[0].text.startswith("-")
+
+
 FIND_ACTS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 
 
@@ -1111,8 +1160,6 @@ GIT_READ = {"status", "log", "show", "diff", "rev-parse", "rev-list", "ls-files"
 GIT_READ_LONG = ("output", "ext-diff", "open-files-in-pager", "exec")
 GIT_GLOBAL = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs"}
 MERGE_OK = {"--ff-only", "-q", "--quiet", "-v", "--verbose", "--stat", "-n", "--no-stat", "--progress", "--no-progress"}
-PUSH_OK = {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--progress", "--no-progress", "--atomic", "-n",
-           "--dry-run", "--follow-tags", "--porcelain"}
 WORKTREE_OK = {"--detach", "-d", "--lock", "--track", "--no-track", "--checkout", "--no-checkout", "-q", "--quiet",
                "--guess-remote", "--no-guess-remote", "--orphan"}
 
@@ -1142,7 +1189,9 @@ def _git_safe(args: list[Word], line: _Line, ctx: _Context) -> bool:
         return False  # a repository elsewhere may carry hooks or a configuration that runs programs
     parts = Path(_within(real, ctx.home) or ".").parts
     if any((Path(ctx.home, *parts[:size]) / ".git").exists() for size in range(1, len(parts) + 1) if parts != (".",)):
-        return False  # a repository nested in the project, whose own folder is not guarded
+        return False  # a repository nested in the project
+    if line.made_folders:
+        return False  # a folder made earlier in the line may be a repository git would run in
     sub, rest = args[index].text, args[index + 1:]
     if sub in GIT_READ:
         return _plain(rest, short="O" if sub == "grep" else "", long=GIT_READ_LONG, glob=False) is not None
@@ -1201,28 +1250,68 @@ def _git_commit(rest: list[Word], folder: Path, line: _Line, ctx: _Context) -> b
     return message
 
 
+#: A branch or remote named plainly: no `:`, `+`, `@`, `~`, `^`, glob, or `..`.
+PLAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+
+
+def _git_run(folder: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True, check=False, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _plain_name(text: str) -> bool:
+    return bool(PLAIN_NAME.fullmatch(text)) and ".." not in text and not text.endswith(("/", ".lock")) and text != "HEAD"
+
+
+def _local_branch(folder: Path, name: str) -> bool:
+    """True when `name` is plainly an existing local branch, and no file of that name exists."""
+    done = _git_run(folder, "show-ref", "--verify", "--quiet", f"refs/heads/{name}")
+    return (_plain_name(name) and not os.path.lexists(os.path.join(folder, name))
+            and done is not None and done.returncode == 0)
+
+
+def _remotes(folder: Path) -> set[str]:
+    done = _git_run(folder, "remote")
+    return set(done.stdout.split()) if done is not None and done.returncode == 0 else set()
+
+
 def _git_fetch(rest: list[Word], folder: Path, line: _Line, ctx: _Context) -> bool:
-    found = _plain(rest, short="pPfu", long=("prune", "prune-tags", "force", "upload-pack", "refmap", "update-head-ok"),
-                   glob=False)
-    # `+ref` forces a local branch; a `transport::address` remote, such as ext::, runs a program.
-    return found is not None and not any(word.text.startswith("+") or "::" in word.text for word in found)
+    """A fetch from a remote the repository names, with plain branch names: never a URL or a
+    `host:path`, which reach any machine, and no prune or force."""
+    flags = {"-q", "--quiet", "-v", "--verbose", "--tags", "--no-tags", "--progress", "--no-progress"}
+    if not all(word.literal for word in rest) or any(word.text.startswith("-") and word.text not in flags for word in rest):
+        return False
+    operands = [word.text for word in rest if not word.text.startswith("-")]
+    if not operands:
+        return True
+    if operands[0] not in _remotes(folder):
+        return False
+    return all(all(_plain_name(part) for part in spec.split(":", 1)) for spec in operands[1:])
+
+
+def _branch_move(rest: list[Word], folder: Path, create: tuple[str, ...]) -> bool:
+    """`git switch NAME` or `git checkout NAME` for an existing local branch, or a new branch made
+    with -c or -b, from a start point named plainly that is not a file. Nothing else: no path, no
+    pathspec, no glob, no force."""
+    if not all(word.literal for word in rest):
+        return False
+    texts = [word.text for word in rest if word.text not in ("-q", "--quiet")]
+    if texts and texts[0] in create:
+        if len(texts) not in (2, 3) or not _plain_name(texts[1]):
+            return False
+        start = texts[2:]
+        return all(_plain_name(name) and not os.path.lexists(os.path.join(folder, name)) for name in start)
+    return len(texts) == 1 and _local_branch(folder, texts[0])
 
 
 def _git_switch(rest: list[Word], folder: Path, line: _Line, ctx: _Context) -> bool:
-    found = _plain(rest, short="Cfm", long=("force", "force-create", "discard-changes", "orphan", "merge", "conflict"),
-                   glob=False)
-    return found is not None and len(found) <= 2
+    return _branch_move(rest, folder, ("-c", "--create"))
 
 
 def _git_checkout(rest: list[Word], folder: Path, line: _Line, ctx: _Context) -> bool:
-    """`git checkout BRANCH` or `-b NEW [START]`: never a path, so no word may name one that exists."""
-    if any(word.text == "--" for word in rest):
-        return False
-    found = _plain(rest, short="fBmp", long=("force", "orphan", "merge", "patch", "ours", "theirs", "conflict",
-                                             "overlay", "no-overlay", "pathspec-from-file", "ignore-skip-worktree-bits"),
-                   glob=False)
-    return found is not None and len(found) <= 2 and all(
-        word.text != "." and not os.path.lexists(os.path.join(folder, word.text)) for word in found)
+    return _branch_move(rest, folder, ("-b",))
 
 
 def _git_merge(rest: list[Word], folder: Path, line: _Line, ctx: _Context) -> bool:
@@ -1252,45 +1341,26 @@ def _git_worktree(rest: list[Word], folder: Path, line: _Line, ctx: _Context) ->
     return bool(operands) and _writable(operands[0], _Line(folder), ctx)
 
 
-def _current_branch(folder: Path) -> str | None:
-    try:
-        done = subprocess.run(["git", "-C", str(folder), "symbolic-ref", "--short", "-q", "HEAD"],
-                              capture_output=True, text=True, check=False, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return done.stdout.strip() or None
-
-
 def _git_push(rest: list[Word], folder: Path, line: _Line, ctx: _Context) -> bool:
-    """A push of named branches, other than the main line, to a remote named by its short name,
-    with no force, no delete, no mirror, no `+ref` and no `:ref`."""
-    operands = []
-    for word in rest:
-        if not word.literal:
-            return False
-        text = word.text
-        if text.startswith("-"):
-            if text not in PUSH_OK and not (not text.startswith("--") and set(text[1:]) <= set("uqvn")):
-                return False
-        else:
-            operands.append(text)
-    if len(operands) < 2 or not re.fullmatch(r"[A-Za-z0-9._-]+", operands[0]):
+    """Only `git push [-u] REMOTE BRANCH`: a remote the repository names, with no push mapping or
+    mirror in its configuration, and an existing local branch named plainly that is not the main
+    line under any of its names. Anything else gets no answer."""
+    if not all(word.literal for word in rest):
         return False
-    main = ctx.policy.main.removeprefix("refs/heads/").split("/")[-1]
-    mains = {"main", "master", main.casefold()} - {""}
-    for spec in operands[1:]:
-        if spec.startswith(("+", ":")) or any(char in spec for char in "*^~?[\\"):
-            return False
-        source, _, target = spec.partition(":")
-        target = target or source
-        if target == "HEAD":
-            target = _current_branch(folder) or ""
-        if target.startswith("refs/tags/"):
-            continue
-        target = target.removeprefix("refs/heads/")
-        if not target or target.startswith("refs/") or target.casefold() in mains:
-            return False
-    return True
+    texts = [word.text for word in rest if word.text not in ("-u", "--set-upstream")]
+    if len(texts) != 2 or any(text.startswith("-") for text in texts):
+        return False
+    remote, branch = texts
+    main = ctx.policy.main.removeprefix("refs/").removeprefix("heads/").removeprefix("remotes/").split("/")[-1]
+    default = _git_run(folder, "symbolic-ref", "-q", "--short", f"refs/remotes/{remote}/HEAD")
+    named = default.stdout.strip().removeprefix(f"{remote}/") if default is not None else ""
+    mains = {"main", "master", main.casefold(), named.casefold()} - {""}  # also the remote's own default branch
+    if remote not in _remotes(folder) or branch.casefold() in mains or branch.startswith(("refs/", "heads/", "remotes/", "tags/")):
+        return False
+    mapped = _git_run(folder, "config", "--get-regexp", rf"^remote\.{re.escape(remote)}\.(push|mirror)$")
+    if mapped is None or mapped.stdout.strip():
+        return False
+    return _local_branch(folder, branch)
 
 
 GIT_CHANGES: dict[str, Callable[[list[Word], Path, _Line, _Context], bool]] = {
@@ -1307,11 +1377,10 @@ SAFE: dict[str, Rule] = {
     "sort": _tool(short="o", long=("output", "compress-program"), glob=False),
     "uniq": _tool(glob=False, operands=1),
     "rg": _tool(short="z", long=("pre", "pre-glob", "hostname-bin", "search-zip"), glob=False),
-    "tree": _tool(short="o", long=("output",), glob=False),
     "file": _tool(short="C", long=("compile",), glob=False),
     "date": _tool(short="sf", long=("set", "file"), glob=False),
-    **{name: _tool(dynamic=True) for name in ("echo", "printf", "true", "false", "test", "[", "cd")},
-    "sed": _sed, "find": _find, "mkdir": _maker, "touch": _maker, "git": _git_safe,
+    **{name: _tool(dynamic=True) for name in ("echo", "true", "false", "test", "[", "cd")},
+    "printf": _printf, "sed": _sed, "find": _find, "mkdir": _maker, "touch": _maker, "git": _git_safe,
     "rm": _remover("rRfvdI", ("recursive", "force", "verbose", "dir")), "rmdir": _remover("v", ()),
 }
 #: Safe commands that change nothing, so a `cd` after them can still be followed.

@@ -11,11 +11,14 @@ array, a parameter expansion that runs a command, an unclosed quote or here-docu
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 #: Operators that end a simple command, longest first.
 CONTROL = (";;&", "&&", "||", ";;", ";&", "|&", ";", "&", "|", "(", ")", "\n")
-_REDIRECT = re.compile(r"(\d*)(<<<|<<-|<<|<>|<&|<(?!\()|>>!|>>\||>>|>\||>!|>&|>(?!\()|&>>|&>\||&>)")
+#: Redirections, longest first, with zsh's clobber and append forms (`&>!`, `>&|`, `>>&` …).
+_REDIRECT = re.compile(r"(\d*)(&>>!|&>>\||>>&!|>>&\||&>!|&>\||>&!|>&\||>>&|&>>|<<<|<<-|<<|<>|<&|<(?!\()"
+                       r"|>>!|>>\||>>|>\||>!|>&|>(?!\()|&>)")
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
 #: Words that open a construct the reader does not follow.
@@ -86,7 +89,12 @@ def _is_descriptor(word: Word) -> bool:
 
 
 def parse(text: str) -> list[Simple | str]:
-    """The line as simple commands and the operators between them. Raises Unreadable."""
+    """The line as simple commands and the operators between them. Raises Unreadable, also for a
+    control or invisible character other than a tab or a newline: a shell reads a carriage return
+    as part of a word, and a reader that does not would see another path than the shell."""
+    for char in text:
+        if char not in "\t\n" and (unicodedata.category(char)[0] == "C" or unicodedata.category(char) in ("Zl", "Zp")):
+            raise Unreadable(f"the command holds the character U+{ord(char):04X}")
     reader = _Reader(text)
     return reader.read(stop=False)
 
@@ -137,6 +145,8 @@ class _Reader:
                 if op == "(":
                     if not current.empty:
                         raise Unreadable("a function or an array")
+                    if self.s[self.i:].lstrip(" \t").startswith("("):
+                        raise Unreadable("an arithmetic command")
                     depth += 1
                 elif op == ")":
                     depth -= 1
@@ -157,7 +167,7 @@ class _Reader:
 
     def _blanks(self) -> None:
         while self.i < len(self.s):
-            if self.s[self.i] in " \t\r":
+            if self.s[self.i] in " \t":
                 self.i += 1
             elif self.s.startswith("\\\n", self.i):
                 self.i += 2
@@ -169,6 +179,8 @@ class _Reader:
         if self.i >= len(self.s) or self.s[self.i] in "\n;&|()<>":
             raise Unreadable("a redirection names nothing")
         redirect = Redirect(op=op, fd=fd, target=self._word())
+        if redirect.target.raw.startswith(("!", "|")):
+            raise Unreadable("a redirection whose form this reader does not know")
         if op in ("<<", "<<-"):
             plain = not any(char in redirect.target.raw for char in "'\"\\")
             self.pending.append((redirect, redirect.target.text, plain))
@@ -205,7 +217,7 @@ class _Reader:
                 word.bare = True
                 out.append("<(…)")
                 continue
-            if char in " \t\r\n;&|()<>":
+            if char in " \t\n;&|()<>":
                 break
             if char == "\\":
                 if self.i + 1 >= len(self.s):
@@ -280,9 +292,9 @@ class _Reader:
             end = s.find("}", i + 2)
             if end < 0:
                 raise Unreadable("a parameter expansion is not closed")
-            inside = s[i + 2:end]
-            if any(mark in inside for mark in ("$(", "`", "${", "'", '"')):
-                raise Unreadable("a parameter expansion runs a command")
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-]", s[i + 2:end]):
+                # Flags, defaults that assign, prompts, subscripts: only the plain ${NAME} is read.
+                raise Unreadable("a parameter expansion other than ${NAME}")
             self.i = end + 1
         elif after == "'" and not quoted:
             j = i + 2
@@ -301,6 +313,8 @@ class _Reader:
             return
         elif after == "[":
             raise Unreadable("an arithmetic expansion")
+        elif after and after in "=~^+":
+            raise Unreadable("a zsh expansion flag")  # $~X globs the value, and a glob qualifier can run code
         elif after and (after.isdigit() or after in "@*#?$!-"):
             self.i = i + 2
         elif after and _NAME.match(after):

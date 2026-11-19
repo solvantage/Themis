@@ -23,8 +23,9 @@ PARSERS = ("path-line-message", "json-lines")
 #: How the agent hook answers before a tool call: ask for danger and leave the rest to the host, or
 #: also allow what it reads in full and knows is safe.
 PRETOOL_MODES = ("ask", "allow-safe")
-#: Where scratch work lives, when [agents] sets no `temp`. `$TMPDIR` is read when the hook runs.
-TEMP_FOLDERS = ("/tmp/**", "/private/tmp/**", "/var/folders/**", "$TMPDIR/**")
+#: Where scratch work lives, when [agents] sets no `temp`: inside a folder of /tmp (not a folder of
+#: /tmp itself, which other sessions may own), and the session's own `$TMPDIR`, read when the hook runs.
+TEMP_FOLDERS = ("/tmp/*/**", "/private/tmp/*/**", "$TMPDIR/**")
 #: Keys any rule's table may hold, beside the rule's own parameters.
 COMMON_RULE_KEYS = {
     "level": Choice(*LEVELS),
