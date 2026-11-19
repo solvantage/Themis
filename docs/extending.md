@@ -155,6 +155,7 @@ A pack teaches Themis one field. It can provide these, and a field rarely needs 
 | Defaults for core rules | `pack.defaults`: a function of the manifest |
 | A report | `pack.report`: what `themis report` calls |
 | The inputs of a gate | `pack.inputs[gate]`: builds what the gate reads from the records, so it is never typed |
+| Records for a guarded action | `pack.actions[action]`: what `themis act` writes before the command starts, such as a look record; it raises ValueError to refuse, and then nothing runs |
 | Standards | `pack.standards[id] = Standard(...)` |
 
 A whole pack, small enough to read at once. It runs as a local pack as it is.
