@@ -34,6 +34,7 @@ themis describe        # every rule, and what is not in force
 themis check           # run the rules: exit 0 PASS, 1 FAIL, 2 REFUSE
 themis prove           # show that each rule in force can fail
 themis hooks install   # the agent hooks: before a tool call, session start, end of turn
+themis act publish site -- ./publish.sh   # a guarded command: runs once, on the owner's grant
 ```
 
 In this repository:

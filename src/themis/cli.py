@@ -317,6 +317,17 @@ def command_grant(args: argparse.Namespace) -> int:
     return EXIT_PASS
 
 
+def command_act(args: argparse.Namespace) -> int:
+    """Run a guarded command with the owner's unspent grant; or, from inside one, check that it runs so."""
+    from themis import act
+
+    ready = _ready(args)
+    if ready is None:
+        return EXIT_REFUSE
+    root, manifest = ready
+    return act.main(root, manifest, args.action, args.target, list(args.command), verify_only=args.verify)
+
+
 def command_attest(args: argparse.Namespace) -> int:
     from themis import grants
 
@@ -731,6 +742,13 @@ def build_parser() -> argparse.ArgumentParser:
     grant.add_argument("--ceiling", type=float, help="the most that may be spent")
     grant.add_argument("--unit", help="the ceiling's unit")
     grant.add_argument("--by", default="owner")
+
+    act = add("act", command_act, "Run a guarded command with the owner's unspent grant, and spend it.")
+    act.add_argument("action", help="the guarded action, such as holdout, spend or publish")
+    act.add_argument("target", help="what it acts on: the target the grant names")
+    act.add_argument("--verify", action="store_true",
+                     help="from inside the command: exit 0 only when it runs under `themis act ACTION TARGET`")
+    act.set_defaults(command=[])  # everything after `--`, as for run
 
     attest = add("attest", command_attest, "Record that someone judged a file, and the file's hash.")
     attest.add_argument("subject", help="the file that was judged")

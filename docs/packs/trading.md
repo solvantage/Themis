@@ -297,6 +297,12 @@ A look at sealed data goes like this. The owner runs `themis grant holdout <stud
 and an action receipt are written, and only then are the dates returned. The same grant does not
 open the window twice.
 
+A look made by a program outside Python, such as an outside tester, goes through `themis act
+holdout <study>/<window> -- <command>`. The pack writes the signal look before the command starts,
+and the core writes the action receipt. The command can call `themis act --verify holdout
+<study>/<window>` and refuse to run without it. A project that states its own `guarded` list for
+`grant/required` keeps `holdout` in it.
+
 ## 9. The report
 
 `themis report <study>` builds two files from the study's own files. Nothing on them is typed,
