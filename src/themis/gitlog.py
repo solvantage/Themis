@@ -120,6 +120,13 @@ class Git:
         out = self.run("show", "-s", "--format=%cs", commit)
         return out.strip() if out else None
 
+    def commit_time(self, commit: str) -> str | None:
+        """The commit's committer time in strict ISO 8601, with its UTC offset (`%cI`), such as
+        2026-11-20T09:00:05+07:00, or Z for UTC in some versions of git: the moment it was made, by
+        the committer's clock."""
+        out = self.run("show", "-s", "--format=%cI", commit)
+        return out.strip() if out and out.strip() else None
+
     def changed_against(self, ref: str) -> list[str]:
         """Every path that differs from that commit: committed since, staged, unstaged or untracked."""
         committed = self.run("diff", "--name-only", "-z", ref, "--") or ""

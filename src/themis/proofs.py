@@ -47,6 +47,7 @@ class World:
         self._started = False
         self._clock = 0
         self._day = "2026-01-01"
+        self._hour = 0
 
     # -- files ----------------------------------------------------------------------------------
 
@@ -73,16 +74,19 @@ class World:
             self._started = True
             self.git("init", "-q", "-b", "main")
         self._clock += 1
-        stamp = f"{self._day}T00:{self._clock // 60:02d}:{self._clock % 60:02d}+00:00"
+        stamp = f"{self._day}T{self._hour:02d}:{self._clock // 60:02d}:{self._clock % 60:02d}+00:00"
         env = {**os.environ, **_GIT_ENV, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
         done = subprocess.run(["git", *args], cwd=self.root, env=env, capture_output=True, text=True, check=False)
         if done.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed in a proof world: {done.stderr.strip()}")
         return done.stdout
 
-    def on(self, day: str) -> None:
-        """Date the commits that follow on this day (YYYY-MM-DD), so a world's history spans time."""
-        self._day = day
+    def on(self, day: str, hour: int = 0) -> None:
+        """Date the commits that follow on this day (YYYY-MM-DD), in this hour of it (UTC), so a
+        world's history spans time: a seal can reach the main line an hour before a result, or after."""
+        if not isinstance(hour, int) or not 0 <= hour <= 23:
+            raise ValueError(f"an hour of the day is a whole number from 0 to 23, not {hour!r}")
+        self._day, self._hour = day, hour
 
     def commit(self, message: str = "work") -> str:
         """Commit everything on the current branch. The first commit starts the repository on `main`."""

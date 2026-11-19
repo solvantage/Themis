@@ -279,8 +279,10 @@ work = ["research/*", "systems/*/setups/*/tune"]    # a study is a folder under 
 ```
 
 A proof builds a small repository from scratch in `world`: `write`, `remove`, `move`,
-`manifest`, and git with `commit`, `branch`, `checkout`, `merge` and `pull_request`; `on(day)`
-dates the commits that follow, for a proof of `since`. The proof holds only when the rule
+`manifest`, and git with `commit`, `branch`, `checkout`, `merge` and `pull_request`; `on(day,
+hour)` dates the commits that follow, to the hour, for a proof of `since` or of what reached the
+main line before a moment of the day. `ctx.git.commit_time(commit)` reads a commit's time to the
+second, with its UTC offset. The proof holds only when the rule
 reaches the expected verdict, and, with `contains`, for that reason.
 
 An installed pack is found through a Python entry point named `themis.packs`.
