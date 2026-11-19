@@ -215,6 +215,64 @@ def _(world):
     _grant(world, "0" * 64)
 
 
+SUITE = MANIFEST + """
+    [suite]
+    command = "pytest -q"
+"""
+SKIP = """
+    [[suite.skips]]
+    test = "tests/test_slow.py::test_all"
+    reason = "it needs data the repository does not hold"
+    until = "2027-01-01"
+"""
+
+
+def _branch(world, before: str, after: str) -> None:
+    """The manifest `before` on the main line, and `after` on a branch, with no grant."""
+    world.manifest(before)
+    world.commit("main")
+    world.branch("change")
+    world.manifest(after)
+    world.commit("change")
+
+
+@proof("config/no-silent-weakening", "new tables, and a required parameter first set, need no grant", expect="pass")
+def _(world):
+    _branch(world, MANIFEST, SUITE + """
+        [views]
+        "docs/rules.md" = "rules"
+
+        [rules."registry/indexed"]
+        work = ["work/*", "lab/*"]
+        index = "INDEX.md"
+    """)
+
+
+@proof("config/no-silent-weakening", "a skip removed from the suite needs no grant", expect="pass")
+def _(world):
+    _branch(world, SUITE + SKIP, SUITE)
+
+
+@proof("config/no-silent-weakening", "a test skipped with no grant fails", expect="fail",
+       contains="a test is skipped that was not")
+def _(world):
+    _branch(world, SUITE, SUITE + SKIP)
+
+
+@proof("config/no-silent-weakening", "a table removed with no grant fails", expect="fail", contains="[suite] removed")
+def _(world):
+    _branch(world, SUITE, MANIFEST)
+
+
+@proof("config/no-silent-weakening", "a start date set for the first time is still a weakening", expect="fail",
+       contains="binds from None to 2027-01-01")
+def _(world):
+    _branch(world, MANIFEST, MANIFEST + """
+        [rules."registry/indexed"]
+        since = "2027-01-01"
+    """)
+
+
 @proof("config/no-silent-weakening", "a new manifest has nothing to weaken", expect="pass")
 def _(world):
     world.write("README.md")

@@ -542,11 +542,13 @@ What counts as weakening:
 | --- | --- |
 | A rule's level lowered: `enforce` to `warn`, or to `off` | Yes |
 | A parameter moved in its looser direction: a longer window, a higher budget, a lower minimum | Yes |
-| A rule's start date moved later; a closed list grown | Yes |
+| A rule's start date moved later, or set for the first time; a closed list grown | Yes |
 | An external check removed; its command, its trigger paths or its verdict mapping changed; its plant removed | Yes |
 | A role's paths widened; a denied tool allowed; a governed document dropped | Yes |
 | A pack removed; the declared standard lowered or removed | Yes |
+| A table, a key or a list entry removed; a value changed whose direction nothing states; a test skip added; a home moved | Yes |
 | The opposite of any of these; a new external check added | No |
+| An addition: a new table (a pack's, `[views]`, `[suite]`, `[agents]`) or key in one, a new list entry, a rule's required parameter first set, another `work` pattern | No |
 | A change Themis cannot classify | Treated as weakening |
 
 `themis config diff` shows a branch's changes sorted into these two groups before the owner is

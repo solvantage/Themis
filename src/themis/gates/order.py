@@ -15,7 +15,7 @@ records.register("amendment", {
     "seal": Required(str), "sha256": Required(str), "reason": Required(str), "loosens": bool, "*": ANY,
 }, "**/amendments/*.toml")
 
-WORK = Param("work", Either(str, [str]), None, None,
+WORK = Param("work", Either(str, [str]), None, "larger",
              "the folders that each hold one unit of work: one pattern, such as work/*, or a list of them")
 SEAL = Param("seal", [str], None, None, "the sealed plan's file, inside a unit")
 RESULTS = Param("results", [str], None, None, "the result files, inside a unit")

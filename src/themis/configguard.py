@@ -4,9 +4,11 @@ A configurable guard is easy to defeat by editing its configuration. So the effe
 configuration is hashed and locked, and a change that weakens it is named as one.
 
 A change is a weakening when it lowers a rule's level, moves a parameter in its looser direction,
-moves a start date later, removes or alters an external check, widens what a role may change, or
-drops a pack or a standard. The opposite is a tightening. A change that cannot be classified is
-treated as a weakening.
+moves a start date later (or sets one for the first time), removes or alters an external check,
+widens what a role may change, skips a test, moves where records are read, or drops a pack, a
+standard, a table or a list entry. The opposite is a tightening. An addition is a tightening: a
+new table, a rule's required parameter first set, a new list entry that adds a check, a new
+external check. A change that cannot be classified is treated as a weakening.
 """
 
 from __future__ import annotations
@@ -90,6 +92,13 @@ def _level(stated: Any) -> str:
     return stated.get("level", "warn") if isinstance(stated, dict) else "warn"
 
 
+def _as_set(value: Any) -> Any:
+    """A set-like value as a list: nothing is an empty list, and one pattern is a list of one."""
+    if value is None:
+        return []
+    return [value] if isinstance(value, str) else value
+
+
 def _direction(old: Any, new: Any, stricter: str | None) -> str:
     """Which way a value moved, given the direction that tightens it."""
     if old == new or stricter is None:
@@ -100,6 +109,7 @@ def _direction(old: Any, new: Any, stricter: str | None) -> str:
         except TypeError:
             return "weakening"
         return "tightening" if tighter else "weakening"
+    old, new = _as_set(old), _as_set(new)
     if isinstance(old, dict) and isinstance(new, dict):
         old, new = sorted(old.items(), key=str), sorted(new.items(), key=str)
     if not isinstance(old, (list, tuple)) or not isinstance(new, (list, tuple)):
@@ -141,6 +151,8 @@ def _rule_changes(old: dict[str, Any], new: dict[str, Any]) -> list[Change]:
                 continue
             if param is None:
                 kind = "weakening"
+            elif was in (None, "", [], {}) and name in rule.requires:
+                kind = "tightening"  # a required parameter first set turns the rule on, whichever way it leans
             elif param.stricter is None:
                 # A path or a name has no stricter direction. Setting one turns the rule on. Changing
                 # one can point the rule away from what it guarded, and nothing says which way it went.
@@ -225,11 +237,45 @@ def classify(old: dict[str, Any], new: dict[str, Any]) -> list[Change]:
 
     classified = {"rules", "checks", "roles", "project", "config"}
     for table in sorted((set(old) | set(new)) - classified):
-        if old.get(table) != new.get(table):
-            # Homes, views, the suite command, adapters and pack tables: a change here can hide
-            # records or soften a threshold, and nothing says which way it went.
-            found.append(Change("weakening", f"[{table}] changed, and its direction cannot be classified"))
+        found += _table_changes(f"[{table}]", old.get(table), new.get(table))
     return found
+
+
+def _entry(where: str, key: str) -> str:
+    return f"{where[:-1]}.{key}]" if where.endswith("]") else f"{where}.{key}"
+
+
+def _table_changes(where: str, old: Any, new: Any) -> list[Change]:
+    """The changes to a table the core does not classify by name: views, the suite, the agents,
+    adapters and pack tables. An addition is a tightening: a new table or key names something
+    more for the rules to check, and a new list entry adds one. A removal is a weakening, and so
+    is a changed value, since nothing says which way it went. Two tables are read their own way:
+    a new suite skip is a weakening (a test stops counting) and a removed one a tightening, and any
+    change to [homes] is a weakening, because it moves where records are read from."""
+    if old == new:
+        return []
+    if where == "[homes]" or where.startswith("[homes."):
+        return [Change("weakening", f"{where} changed: records are read from another place")]
+    if where == "[suite.skips]":
+        old, new = old or [], new or []  # no list of skips is an empty one
+    if old is None:
+        return [Change("tightening", f"{where} added")]
+    if new is None:
+        return [Change("weakening", f"{where} removed")]
+    if isinstance(old, dict) and isinstance(new, dict):
+        return [change for key in sorted(set(old) | set(new), key=str)
+                for change in _table_changes(_entry(where, str(key)), old.get(key), new.get(key))]
+    if isinstance(old, list) and isinstance(new, list):
+        added = [item for item in new if item not in old]
+        removed = [item for item in old if item not in new]
+        if where == "[suite.skips]":
+            if added:
+                return [Change("weakening", f"{where}: a test is skipped that was not")]
+            return [Change("tightening", f"{where}: a skip was removed")] if removed else []
+        if removed:
+            return [Change("weakening", f"{where}: an entry was removed or altered")]
+        return [Change("tightening", f"{where}: an entry was added")] if added else []
+    return [Change("weakening", f"{where} changed, and its direction cannot be classified")]
 
 
 def parse(text: str | None) -> dict[str, Any] | None:
