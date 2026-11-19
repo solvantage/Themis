@@ -44,11 +44,48 @@ A pre-registration declares its kind in its frontmatter.
 | Kind | What it does | What its seal must state | What it must ship |
 | --- | --- | --- | --- |
 | `strategy` | Books trades | `binding`, `gate`, `nulls`, `windows`, `mde` | The trade table, the scorecard, the report, an audit before any decision |
-| `signal` | Predicts | The same five | The scorecard, the report, an audit before any decision |
+| `signal` | Predicts | The same five: `binding`, `gate`, `nulls`, `windows`, `mde` | The scorecard, the report, an audit before any decision |
 | `data` | Describes; selects nothing | Only its kind | No scorecard and no audit |
 | `tune` | Searches a strategy's settings | `windows`, `gate`, `iterations`, `risk_rules` | Every settings version counted as a trial; a confirming run on the model the project named |
+| `forward` | Trades live under sealed settings, beside a replay of the same dates | `gate`, `settings`, `min_trades`, `stop_rule`, `lines` with a `line-<id>` for each, `risk` with the same, `ranges` with a `range-<day>` for each, `gap_parts`, `reasons` | A record each week, and that week's decision; no scorecard and no audit |
 
 `mde` is the smallest effect worth seeing. It is set in the seal, never after the run.
+
+A `forward` seal names its gate, `forward`; the fingerprint of the `settings` the live run and every
+replay use; how many trades come before any pass (`min_trades`); in words, who stops trading and
+what must happen before a restart (`stop_rule`); its lines, its risk lines and its ranges, each an
+inline table; the parts the money gap is split into (`gap_parts`); and the known `reasons` for an
+entry missed or extra. `changes_allowed` and `changes_stop` are optional lists of a change's `what`.
+
+```markdown
+---
+kind: forward
+gate: forward
+settings: 3f9a0c1d
+min_trades: 220
+stop_rule: the owner stops it; a restart is a new run, sealed anew
+lines: [match, unexplained, entry-cost]
+line-match: {worse = "lower", pass = 0.90, stop = 0.80, running = 2}
+line-unexplained: {worse = "higher", pass = 50, stop = 200}
+line-entry-cost: {worse = "higher", pass = 0.43, stop = 0.86, min = 30}
+risk: [day-loss]
+line-day-loss: {worse = "higher", stop = 0.52}
+ranges: [30, 61]
+range-30: {low = 9500, high = 12500}
+range-61: {low = 9000, high = 15000}
+gap_parts: [spread, commission, swap]
+reasons: [news pause, server restart]
+changes_allowed: [spread]
+changes_stop: [leverage]
+---
+```
+
+`match` and `unexplained` are drawn by every forward seal and computed by Themis; the other lines
+are the project's own. A line's `worse` says which way it goes bad, `pass` is its bar, and `stop`,
+when it has one, lies past the bar; between the two is "look closer". `running` is how many weeks
+in a row a line must be past its stop before it stops the run, 1 when unset, and `min` the least
+sample it is read on, 0 when unset. A risk line has only `worse` and `stop`. A range is the live
+money on a day since the start, from `low` to `high`.
 
 Whatever its kind, a study that holds anything under `results/` also needs its provenance file,
 five answers in its README about how far it can be believed, and a short explainer page or a

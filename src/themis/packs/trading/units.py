@@ -27,7 +27,7 @@ from themis.rule import Context
 
 SEAL = ["PRE-REG*.md"]
 RESULTS = ["results/**"]
-KINDS = ("strategy", "signal", "data", "tune")
+KINDS = ("strategy", "signal", "data", "tune", "forward")
 METRICS = "results/metrics.json"
 PROVENANCE = "results/provenance.json"
 TRADES = "results/trades.csv"

@@ -47,6 +47,7 @@ pack = register(Pack(
         "signal": "predicts and books no trades: the signal scorecard, the report, an audit",
         "data": "describes and selects nothing: charts with how-to-read boxes; costs no trial",
         "tune": "searches a strategy's settings: a sealed search, every setting a trial, one look at unseen data",
+        "forward": "trades live under sealed settings, beside a replay of the same dates: a record and a decision a week",
     },
 ))
 
