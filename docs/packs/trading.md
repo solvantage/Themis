@@ -297,11 +297,15 @@ The eight forward rules read the studies whose seal is of kind `forward`; with n
 a record or a stored verdict is missing or dishonest. A seal or a record that cannot be read is
 refused by every forward rule, and nothing else of that run is judged.
 
-- **`forward/sealed-before-start`.** The seal's arrival is the committer time of the main-line
-  commit that brought it, or the latest amendment record that names it, read to the second
-  (`Git.commit_time`). The first trade is the earliest `first_trade_at`, matched `live_at` or extra
-  `at` in any week, so a `first_trade_at` typed later than an entry does not move it. It needs no
-  `since` and no release date. With `margin_hours`, the seal must arrive that many hours before.
+- **`forward/sealed-before-start`.** The seal is dated by the last main-line commit that changed
+  it, or changed an amendment record that names it (`Git.last_changes`), read to the second
+  (`Git.commit_time`): an edit made in place counts from the merge that brought the edit. A seal or
+  an amendment in the tree that differs from the main line's tip is not on the main line yet. The
+  first trade is the earliest `first_trade_at`, matched `live_at` or extra `at` in any week, as the
+  tree holds it or as any version of a week's record on the main line held it (`Git.versions`): a
+  `first_trade_at` typed later than an entry, or a record edited or removed once merged, does not
+  move it later. It needs no `since` and no release date. With `margin_hours`, the seal must arrive
+  that many hours before.
 - **`forward/same-dates-control`.** Each week's replay runs over the week's own `period`, from the
   same `start` (each field, a whole number written as 2 or 2.0 alike, a time as one moment), on the
   same `settings`, and on each field in `fields`. The weeks follow one another: no ISO week is

@@ -832,15 +832,38 @@ def _granted(ctx: Context, held: list[Any] | None, subject: str) -> tuple[bool, 
 # -- forward/sealed-before-start ----------------------------------------------------------------
 
 
-def _first_trade(run: Run) -> tuple[dt.datetime, str] | None:
-    """The run's first live trade, and the record it is in: the earliest first_trade_at, or live entry."""
-    found = []
-    for week in run.weeks:
-        live, entries = week.record["live"], week.record["entries"]
-        times = [live["first_trade_at"]] if live["first_trade_at"].strip() else []
-        times += [entry["live_at"] for entry in entries["matched"]] + [entry["at"] for entry in entries["extra"]]
-        found += [(moment(text), week.path) for text in times]
-    return min(found, key=lambda item: item[0], default=None)  # type: ignore[arg-type,return-value]
+def _trade_times(record: Any) -> list[dt.datetime]:
+    """Every live trade time a record holds, read leniently: its first_trade_at, and each matched and
+    extra entry's live time. A value that is not a time with its offset is left out."""
+    live = record.get("live") if isinstance(record, dict) else None
+    entries = record.get("entries") if isinstance(record, dict) else None
+    texts = [live.get("first_trade_at")] if isinstance(live, dict) else []
+    for kind, key in (("matched", "live_at"), ("extra", "at")):
+        held = entries.get(kind) if isinstance(entries, dict) else None
+        texts += [entry.get(key) for entry in held if isinstance(entry, dict)] if isinstance(held, list) else []
+    return [found for found in map(moment, texts) if found is not None]
+
+
+def _first_trade(ctx: Context, run: Run, main: str) -> tuple[dt.datetime, str] | None:
+    """The run's first live trade, and the record it is in: the earliest first_trade_at or live entry in
+    any record of the run, as the tree holds it or as any version of it on the main line held it. A
+    record edited, or removed, after it reached the main line cannot move the first trade later."""
+    found = [(when, week.path) for week in run.weeks for when in _trade_times(week.record)]
+    for path in sorted(ctx.git.last_changes(main)):
+        if not (path.startswith(f"{run.study}/") and work.inside(run.study, [path], [RECORDS])):
+            continue
+        for text in ctx.git.versions(main, path):
+            try:
+                held = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            found += [(when, path) for when in _trade_times(held)]
+    return min(found, key=lambda item: item[0], default=None)
+
+
+def _differs(ctx: Context, main: str, path: str) -> bool:
+    """True when the file in the tree is not the file at the main line's tip."""
+    return ctx.git.show(main, path) != ctx.read(path)
 
 
 MARGIN = Param("margin_hours", float, 0, "higher", "how many hours before the first live trade the seal must arrive")
@@ -857,32 +880,36 @@ def sealed_before_start(ctx: Context) -> None:
     fix = ("merge a forward run's seal on its own before its first live trade; a run that traded first is sealed "
            "anew, in a folder of its own, before its next trade")
     for run in runs:
-        first = _first_trade(run)
+        if main is None:
+            if run.weeks:
+                ctx.inspect()
+                ctx.refuse("there is no main line, so the seal's arrival cannot be read", where=run.seal.path,
+                           fix="commit to main, or set project.main")
+            continue
+        first = _first_trade(ctx, run, main)
         if first is None:
             continue  # no live trade yet: nothing can have come before the seal
         ctx.inspect()
-        if main is None:
-            ctx.refuse("there is no main line, so the seal's arrival cannot be read", where=run.seal.path,
-                       fix="commit to main, or set project.main")
-            continue
-        arrivals, line = ctx.git.arrivals(main), ctx.git.main_line(main)
+        changed_at, line = ctx.git.last_changes(main), ctx.git.main_line(main)
         mine = [record for record in amendments if str(record.get("seal", "")).strip("/") == run.seal.path]
-        late = [record.path for record in mine if record.path not in arrivals]
-        if run.seal.path not in arrivals or late:
-            said = ("its seal is not on the main line" if run.seal.path not in arrivals
-                    else f"an amendment of its seal, {late[0]}, is not on the main line")
-            ctx.breach(f"this forward run has traded, and {said}", where=run.seal.path, fix=fix)
+        files = [run.seal.path, *(record.path for record in mine)]
+        away = [path for path in files if path not in changed_at or _differs(ctx, main, path)]
+        if away:
+            said = (f"its seal, {away[0]}," if away[0] == run.seal.path else f"an amendment of its seal, {away[0]},")
+            ctx.breach(f"this forward run has traded, and {said} is not on the main line as it stands", where=away[0],
+                       fix=fix)
             continue
-        latest = max([arrivals[run.seal.path], *(arrivals[record.path] for record in mine)])
-        what = "the seal" if latest == arrivals[run.seal.path] else "an amendment of the seal"
+        # Dated by the last change of each file: an edit in place counts as made when it was merged.
+        latest = max(changed_at[path] for path in files)
+        what = "the seal" if latest == changed_at[run.seal.path] else "an amendment of the seal"
         arrived = moment(ctx.git.commit_time(line[latest]))
         if arrived is None:
             ctx.refuse(f"the main line's commit {line[latest][:12]} has no time that can be read", where=run.seal.path)
             continue
         if not arrived < first[0] - dt.timedelta(hours=margin):
             gap = (f"less than {margin:g} hour(s) before" if margin else "not before")
-            ctx.breach(f"{what} reached the main line at {_shown(arrived)}, {gap} the first live trade at "
-                       f"{_shown(first[0])}", where=first[1], fix=fix)
+            ctx.breach(f"{what}, as it stands, reached the main line at {_shown(arrived)}, {gap} the first live "
+                       f"trade at {_shown(first[0])}", where=first[1], fix=fix)
 
 
 # -- forward/same-dates-control -----------------------------------------------------------------
@@ -1312,13 +1339,15 @@ def _forward(world: World, weeks: tuple[int, ...] = (48, 49), seal: dict[str, An
              owned: dict[int, str] | None = None, granted: tuple[int, ...] = (),
              after: dict[int, dict[str, Any]] | None = None, rules: str = "",
              sealed_on: tuple[str, int] | None = ("2026-11-20", 9), amended_on: tuple[str, int] | None = None,
-             files: dict[str, str] | None = None) -> None:
+             commits: tuple[tuple[str, int, dict[str, str | None]], ...] = (),
+             files: dict[str, str | None] | None = None) -> None:
     """A forward run: its seal merged on the main line on `sealed_on` (a day and an hour; None leaves it
     off the main line), and an honest record for each week but for its `changes`. The weeks in
     `decided` (every week when None) are decided by the gate, with `typed` and `inputs` typed over what
-    is stored; the weeks in `owned` are the owner's own call, and those in `granted` hold the owner's
-    grant. `after` changes a record once its week is decided. `amended_on` merges an amendment of the
-    seal on that day and hour."""
+    is stored; the weeks in `owned` are the owner's own call (a decision word, or a word and a
+    verdict), and those in `granted` hold the owner's grant. `after` changes a record once its week is
+    decided. `amended_on` merges an amendment of the seal on that day and hour, and `commits` merges
+    each (day, hour, files) after it, a file set to None removed. `files` are written last."""
     world.manifest(MANIFEST + rules)
     if sealed_on is None:
         world.commit("the project")
@@ -1329,9 +1358,12 @@ def _forward(world: World, weeks: tuple[int, ...] = (48, 49), seal: dict[str, An
         world.commit("the seal, merged on its own")
     if amended_on is not None:
         world.on(*amended_on)
-        world.write(f"{STUDY}/amendments/1.toml", f'seal = "{STUDY}/PRE-REG.md"\nsha256 = "{"0" * 64}"\n'
-                                                  'reason = "a sentence of the plan was put more plainly"\n')
+        world.write(AMENDMENT, amendment_text())
         world.commit("an amendment of the seal")
+    for day, hour, made in commits:
+        world.on(day, hour)
+        _put(world, made)
+        world.commit("a later change, merged on the main line")
     order = {number: index for index, number in enumerate(weeks, start=1)}
     for number, index in order.items():
         world.write(_week_path(number), json.dumps(changed(week_record(number, index), (changes or {}).get(number, {}))))
@@ -1345,8 +1377,24 @@ def _forward(world: World, weeks: tuple[int, ...] = (48, 49), seal: dict[str, An
     for number, made in (after or {}).items():
         record = changed(week_record(number, order[number]), {**(changes or {}).get(number, {}), **made})
         world.write(_week_path(number), json.dumps(record))
-    for path, text in (files or {}).items():
-        world.write(path, text)
+    _put(world, files or {})
+
+
+def _put(world: World, files: dict[str, str | None]) -> None:
+    """Write each file, or remove it when its text is None."""
+    for path, text in files.items():
+        if text is None:
+            world.remove(path)
+        else:
+            world.write(path, text)
+
+
+AMENDMENT = f"{STUDY}/amendments/1.toml"
+
+
+def amendment_text(sha256: str = "0" * 64) -> str:
+    return (f'seal = "{STUDY}/PRE-REG.md"\nsha256 = "{sha256}"\n'
+            'reason = "a sentence of the plan was put more plainly"\n')
 
 
 def _prove(rule_id: str, cases: list[tuple[str, str, str | None, dict[str, Any]]]) -> None:
@@ -1378,16 +1426,32 @@ _prove("forward/sealed-before-start", [
      {"amended_on": ("2026-11-21", 9)}),
     ("the seal merged an hour after the first live trade", "fail",
      "not before the first live trade at 2026-11-23T11:00:00+00:00", {"sealed_on": ("2026-11-23", 12)}),
-    ("an amendment merged after the first live trade", "fail", "an amendment of the seal reached the main line at "
-     "2026-11-24T09:00", {"amended_on": ("2026-11-24", 9)}),
+    ("an amendment merged after the first live trade", "fail", "an amendment of the seal, as it stands, reached the "
+     "main line at 2026-11-24T09:00", {"amended_on": ("2026-11-24", 9)}),
+    ("an amendment merged before the first trade, edited in place after it", "fail",
+     "an amendment of the seal, as it stands, reached the main line at 2026-11-25T09:00",
+     {"amended_on": ("2026-11-21", 9), "commits": (("2026-11-25", 9, {AMENDMENT: amendment_text("1" * 64)}),)}),
+    ("the seal edited in place after the first trade", "fail",
+     "the seal, as it stands, reached the main line at 2026-11-25T09:00", {"commits": (("2026-11-25", 9, {
+         f"{STUDY}/PRE-REG.md": seal_text(**{"line-match": '{worse = "lower", pass = 0.5, stop = 0.3}'})}),)}),
+    ("the seal edited in place before the first trade", "pass", None, {"commits": (("2026-11-22", 9, {
+        f"{STUDY}/PRE-REG.md": seal_text(stop_rule="the owner stops it, and says why")}),)}),
+    ("a seal loosened in the tree, not merged, after trading began", "fail",
+     "its seal, work/fwd/PRE-REG.md, is not on the main line as it stands",
+     {"files": {f"{STUDY}/PRE-REG.md": seal_text(**{"line-match": '{worse = "lower", pass = 0.5, stop = 0.3}'})}}),
+    ("a first week removed after it reached the main line, and the seal amended after it", "fail",
+     "not before the first live trade at 2026-11-23T11:00:00+00:00",
+     {"weeks": (49,), "commits": (("2026-11-29", 9, {_week_path(48): json.dumps(week_record(48))}),
+                                  ("2026-11-30", 3, {AMENDMENT: amendment_text()}),
+                                  ("2026-11-30", 4, {_week_path(48): None}))}),
     ("first_trade_at typed later than an entry", "fail", "not before the first live trade at 2026-11-23T09:00:00+00:00",
      {"sealed_on": ("2026-11-23", 10), "changes": {48: {"live.first_trade_at": _at(48, 12),
                                                          "entries.matched.0.live_at": _at(48, 9)}}}),
     ("a seal one hour ahead, where the project asks for two", "fail",
      "less than 2 hour(s) before the first live trade at 2026-11-23T11:00:00+00:00",
      {"sealed_on": ("2026-11-23", 10), "rules": _rule("forward/sealed-before-start", "margin_hours = 2")}),
-    ("a run that traded with its seal off the main line", "fail", "this forward run has traded, and its seal is not "
-     "on the main line", {"sealed_on": None}),
+    ("a run that traded with its seal off the main line", "fail", "this forward run has traded, and its seal, "
+     "work/fwd/PRE-REG.md, is not on the main line", {"sealed_on": None}),
     ("a trade time with no UTC offset", "refuse", "is not a time with its UTC offset",
      {"changes": {48: {"live.first_trade_at": "2026-11-23T11:00:00"}}}),
     ("a run with no week yet", "refuse", "nothing was inspected", {"weeks": ()}),

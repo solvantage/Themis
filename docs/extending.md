@@ -282,7 +282,9 @@ A proof builds a small repository from scratch in `world`: `write`, `remove`, `m
 `manifest`, and git with `commit`, `branch`, `checkout`, `merge` and `pull_request`; `on(day,
 hour)` dates the commits that follow, to the hour, for a proof of `since` or of what reached the
 main line before a moment of the day. `ctx.git.commit_time(commit)` reads a commit's time to the
-second, with its UTC offset. The proof holds only when the rule
+second, with its UTC offset; `ctx.git.last_changes(main)` gives each file's last main-line change,
+where `arrivals` gives its first, and `ctx.git.versions(main, path)` every text a file held on the
+main line, a removed file's too. The proof holds only when the rule
 reaches the expected verdict, and, with `contains`, for that reason.
 
 An installed pack is found through a Python entry point named `themis.packs`.

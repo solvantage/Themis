@@ -83,6 +83,24 @@ def test_a_commits_time_is_read_to_the_second_with_its_offset(tmp_path: Path) ->
             world.on("2026-11-23", wrong)
 
 
+def test_a_files_last_change_and_every_version_it_held_are_read_from_the_main_line(tmp_path: Path) -> None:
+    """`arrivals` keeps the commit that first brought a file. A rule that dates what a file says now
+    needs the last commit that changed it, and the texts it held, a deleted file's among them."""
+    world = a_line_with_edits(tmp_path)  # the plan arrives at 3; notes.md changes at 0, 1, 2, 4 and 5
+    git = Git(world.root)
+    assert git.last_changes("main")["work/a/PLAN.md"] == 3 and git.last_changes("main")["notes.md"] == 5
+    git = Git(world.root)
+    world.pull_request("edit", {"work/a/PLAN.md": "the plan, loosened\n"})
+    assert git.arrivals("main")["work/a/PLAN.md"] == 3  # still its first arrival: the planted miss
+    assert Git(world.root).last_changes("main")["work/a/PLAN.md"] == 6
+    world.remove("work/a/PLAN.md")
+    world.commit("the plan removed")
+    git = Git(world.root)
+    assert git.last_changes("main")["work/a/PLAN.md"] == 7
+    assert git.versions("main", "work/a/PLAN.md") == ["the plan, loosened\n", "the plan\n"]
+    assert git.versions("main", "nothing/here.md") == []
+
+
 def test_a_seal_among_edits_is_read_at_its_own_merge(tmp_path: Path) -> None:
     """Before the fix the seal was read one place too early, where it did not exist: a refusal."""
     world = a_line_with_edits(tmp_path)
