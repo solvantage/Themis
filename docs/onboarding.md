@@ -1,8 +1,8 @@
 # Getting started with Themis
 
-> 2026-11-19, for release 0.2.1. Every command and every message quoted here was run against a
-> release: T1–T3 and M1–M3 against 0.1.0, G1 and T4 against 0.2.0. The messages of G1 and T4 are
-> held to what this release prints by `tests/test_onboarding.py`.
+> 2026-11-20, for release 0.3.0. Every command and every message quoted here was run against a
+> release: T1–T3 and M1–M3 against 0.1.0, G1 and T4 against 0.2.0, T5 against 0.3.0. The messages
+> of G1, T4 and T5 are held to what this release prints by `tests/test_onboarding.py`.
 
 Themis checks a repository the way a careful reviewer would, every time, from the files and the
 git history. An AI agent working in the repository cannot quote a number nothing recorded,
