@@ -1,6 +1,6 @@
 # The trading pack
 
-> 2026-11-19. Status: **built**: nineteen rules in six gates. Standard id: `themis-trading/1`.
+> 2026-11-20. Status: **built**: twenty-seven rules in seven gates. Standard id: `themis-trading/1`.
 > `themis describe` lists each rule below and whether its proofs hold.
 
 **In one line:** this pack teaches Themis what evidence means in trading research. A trial is
@@ -8,7 +8,8 @@ counted before it runs, the plan is sealed before the answer is known, unseen da
 once, and a gate function, not a person, says whether an edge is there.
 
 It serves any project that tests trading ideas: research on historical data, strategy backtests,
-and the tuning of a strategy's settings in an outside tester. It names no instrument, venue,
+the tuning of a strategy's settings in an outside tester, and a forward run, where sealed settings
+trade live and each week is held to a replay of the same dates. It names no instrument, venue,
 engine or project. Those are a project's parameters and its own code.
 
 Turn it on in the manifest:
@@ -30,8 +31,8 @@ their trading meaning.
 | --- | --- |
 | Ledger | A **trial**: a ledger record that names the study and how many variants it covers |
 | Order | The **pre-registration** is the seal; everything under `results/` is a result |
-| Decision | A **verdict**, issued by a gate function: `entry`, `signal` or `tune` |
-| Grant | One look at a **sealed window** of data |
+| Decision | A **verdict**, issued by a gate function: `entry`, `signal`, `tune`, or `forward` for each week of a forward run |
+| Grant | One look at a **sealed window** of data; the owner's yes to a forward week's pass that the gate does not give: ahead of its count, or over a stop or a look-closer |
 | Receipt | The action receipt each look leaves; the calibration receipt of each gate |
 | Report | The **scorecard** and its report page |
 
@@ -44,11 +45,51 @@ A pre-registration declares its kind in its frontmatter.
 | Kind | What it does | What its seal must state | What it must ship |
 | --- | --- | --- | --- |
 | `strategy` | Books trades | `binding`, `gate`, `nulls`, `windows`, `mde` | The trade table, the scorecard, the report, an audit before any decision |
-| `signal` | Predicts | The same five | The scorecard, the report, an audit before any decision |
+| `signal` | Predicts | The same five: `binding`, `gate`, `nulls`, `windows`, `mde` | The scorecard, the report, an audit before any decision |
 | `data` | Describes; selects nothing | Only its kind | No scorecard and no audit |
 | `tune` | Searches a strategy's settings | `windows`, `gate`, `iterations`, `risk_rules` | Every settings version counted as a trial; a confirming run on the model the project named |
+| `forward` | Trades live under sealed settings, beside a replay of the same dates | `gate`, `settings`, `min_trades`, `stop_rule`, `lines` with a `line-<id>` for each, `risk` with the same, `ranges` with a `range-<day>` for each, `gap_parts`, `reasons` | A record each week, and that week's decision; no scorecard and no audit |
 
 `mde` is the smallest effect worth seeing. It is set in the seal, never after the run.
+
+A `forward` seal names its gate, `forward`; the fingerprint of the `settings` the live run and every
+replay use; how many trades come before any pass (`min_trades`); in words, who stops trading and
+what must happen before a restart (`stop_rule`); its lines, its risk lines and its ranges, each an
+inline table; the parts the money gap is split into (`gap_parts`); and the known `reasons` for an
+entry missed or extra. `changes_allowed` and `changes_stop` are optional lists of a change's `what`.
+
+```markdown
+---
+kind: forward
+gate: forward
+settings: 3f9a0c1d
+min_trades: 220
+stop_rule: the owner stops it; a restart is a new run, sealed anew
+lines: [match, unexplained, entry-cost]
+line-match: {worse = "lower", pass = 0.90, stop = 0.80, running = 2}
+line-unexplained: {worse = "higher", pass = 50, stop = 200}
+line-entry-cost: {worse = "higher", pass = 0.43, stop = 0.86, min = 30}
+risk: [day-loss]
+line-day-loss: {worse = "higher", stop = 0.52}
+ranges: [30, 61]
+range-30: {low = 9500, high = 12500}
+range-61: {low = 9000, high = 15000}
+gap_parts: [spread, commission, swap]
+reasons: [news pause, server restart]
+changes_allowed: [spread]
+changes_stop: [leverage]
+---
+```
+
+`match` and `unexplained` are drawn by every forward seal and computed by Themis; the other lines
+are the project's own. A line's `worse` says which way it goes bad, `pass` is its bar, and `stop`,
+when it has one, lies past the bar; between the two is "look closer". `running` is how many weeks
+in a row a line must be past its stop before it stops that week, 1 when unset, and `min` the least
+sample it is read on, 0 when unset; a line read on no sample is never judged. A risk line has only `worse` and `stop`. A range is the live
+money on a day since the start, from `low` to `high`. The frontmatter splits every list at its
+commas, so a list item that holds a comma is quoted, `reasons: ["news, pause", server restart]`,
+and a quote an item opens and does not close makes the seal unreadable. It reads a value of digits
+alone as a number, so a fingerprint made only of digits is quoted: `settings: "20261120"`.
 
 Whatever its kind, a study that holds anything under `results/` also needs its provenance file,
 five answers in its README about how far it can be believed, and a short explainer page or a
@@ -61,7 +102,7 @@ A study is one folder. The pack reads these files in it, and these records besid
 | Record | Where | Holds |
 | --- | --- | --- |
 | Trial | `ledger/*.toml` | `work`: the study's path, or its folder name when no other study shares it. `variants`: how many variants it covers; 1 when unset |
-| Pre-registration | `<study>/PRE-REG*.md` | Frontmatter: `kind`, the fields its kind needs, and where they apply `cost_model`, `title` and `not_run_reason`; the study's own windows as `window-<id>` (section 7) |
+| Pre-registration | `<study>/PRE-REG*.md` | Frontmatter: `kind`, the fields its kind needs, and where they apply `cost_model`, `title` and `not_run_reason`; the study's own windows as `window-<id>` (section 7); a forward run's lines and ranges as `line-<id>` and `range-<day>` (section 2) |
 | Provenance | `<study>/results/provenance.json` | `commit`, `clean` (must be true), and `inputs`: each input's path with its sha256 |
 | Metrics | `<study>/results/metrics.json` | The numbers the gate reads; `net_of_cost` and `costs_paid`; the `scorecard` table (section 9) |
 | Trade table | `<study>/results/trades.csv` | One row for each closed trade (section 8) |
@@ -69,6 +110,42 @@ A study is one folder. The pack reads these files in it, and these records besid
 | Verdict | `decisions/*.json` | The core's decision record: the decision, the verdict, the gate and its version, the date, the numbers |
 | Look | `looks/*.toml` | `window`, `study`, `kind` (signal or pipeline), `at`, `grant`, and for a pipeline look its `scope`, `purpose` and `compared_against` |
 | Comparison | `comparisons/**/*.json` | `what` is compared, and `runs`: two or more runs side by side, each with `run` (its id) and the fingerprint fields the project names. Tracked, since a rule cannot see an ignored file |
+| Weekly record | `<study>/results/week-YYYY-WW.json` | One ISO week of a forward run, written by the project's own script (below) |
+| Week decision | `decisions/<study>-week-YYYY-WW.json` | That week's verdict from the gate `forward`: its `work` is `<study>/week-YYYY-WW`, and its `inputs` is the file under `decision-inputs/` the gate read, built from the seal and the records |
+| Forward grant | `grants/*.toml` | The action `forward` on the target `<study>/week-YYYY-WW`: the owner's yes, unspent, to that week's pass where the gate does not pass it: ahead of the count, or over a stop or a look-closer |
+
+**The weekly record.** One file for each ISO week of a forward run, written by the project's own
+script through `themis run`, never by hand. Every key is required, and a list or a table may be
+empty. Every time carries its UTC offset, such as `2026-11-23T00:00:00+00:00`: a time without one,
+a key left out or a value of the wrong shape, and the record is refused.
+
+```json
+{"week": "2026-48", "period": {"from": "", "to": ""},
+ "live":   {"run": "", "settings": "", "start": {"at": "", "balance": 0, "open_positions": 0, "peak": 0},
+            "trades": 0, "net": 0, "first_trade_at": ""},
+ "replay": {"run": "", "settings": "", "period": {}, "start": {}, "trades": 0, "net": 0},
+ "entries": {"matched": [{"id": "", "live_at": "", "replay_at": ""}],
+             "missed": [{"id": "", "at": "", "reason": ""}], "extra": [{"id": "", "at": "", "reason": ""}]},
+ "fill_costs": {"<kind>": {"n": 0, "live": 0, "replay": 0}},
+ "gap": {"parts": {"<part>": 0}, "unexplained": 0},
+ "lines": {"<id>": {"value": 0, "n": 0}},
+ "conditions": {"changes": [{"at": "", "what": "", "from": "", "to": ""}]},
+ "risk": {"<id>": 0}, "range": {"<day>": 0}}
+```
+
+| Key | Holds |
+| --- | --- |
+| `week` | The ISO week, `YYYY-WW`, as the file is named |
+| `period` | `from`, the moment the week starts, and `to`, the moment the next one starts. It lies in the ISO week the file names: its middle, in UTC, falls in that week, and it runs for 8 days at most, so a short first week, a broker's clock hours off UTC and a change of clocks all fit |
+| `live` | `run`, `settings` (the fingerprint), `start` (`at`, `balance`, `open_positions`, `peak`), `trades`, `net`, and `first_trade_at`, empty only in a week with no trade; any further fingerprint fields the project names. `trades` is the number of matched and extra entries: each live trade is one or the other |
+| `replay` | The same settings replayed: `run`, `settings`, its own `period`, `start`, `trades`, `net`; or `null` in a week with no replay |
+| `entries` | `matched`: an entry both took, with `id`, `live_at` and `replay_at`. `missed`, taken by the replay only, and `extra`, taken live only: each with `id`, `at` and its `reason`. Each `live_at` and `at` lies in the week's period; a matched entry's `replay_at` may fall just over its edge |
+| `fill_costs` | For each kind of fill: `n`, and what was paid `live` and in the `replay` |
+| `gap` | `parts`: live less replay money, split into the seal's `gap_parts`; `unexplained`: what the parts leave, which must agree with the remainder Themis works out |
+| `lines` | Each of the project's own lines: its `value` and the `n` it is read on. `value` is `null` only when `n` is 0, and a line read on no sample is never judged. Never `match` or `unexplained`, which Themis computes |
+| `conditions` | `changes`: each change in trading conditions during the week, with `at`, in the period, `what`, `from` and `to` |
+| `risk` | Each sealed risk line's number this week |
+| `range` | The live money on each sealed range day that falls in the week |
 
 ## 4. The lifecycle
 
@@ -78,13 +155,23 @@ A study is one folder. The pack reads these files in it, and these records besid
 | Seal | The pre-registration, merged on its own | `prereg/declared`: a field its kind needs is missing. `order/sealed-first`: the seal and a result arrive in one merge |
 | Do | `themis run <study> --input FILE -- COMMAND` | The command refuses on a dirty tree, or when the seal is not on the main line. It writes the provenance file. Sealed data opens only through `data.window` with a grant |
 | Check | A second script reproduces the numbers; `AUDIT.md` says how it ended | `validity/audit-reproduced` |
-| Decide | `themis decide <study> --gate entry` | `decision/issued-by-gate`: the stored verdict is not what the gate returns. `validity/power-stated`: a kill with no power behind it |
+| Decide | `themis decide <study> --gate entry`, or `--gate signal`, or `--gate tune` | `decision/issued-by-gate`: the stored verdict is not what the gate returns. `validity/power-stated`: a kill with no power behind it |
 | Report | `themis report <study>` | `scorecard/complete`; `report/generated`: the page is older than its inputs |
 | Hand off | `themis checkpoint` | The core's handoff rules |
 
+A forward run has no scorecard and no audit. Its weeks are its results, each decided in turn:
+
+| Step | Command | What stops it |
+| --- | --- | --- |
+| Log | `themis new` writes the trial record | `order/logged-first` |
+| Seal | The forward seal, merged on its own before the first live trade | `prereg/declared`: a field, a line or a range is missing or malformed. `forward/sealed-before-start`: the seal, or an amendment of it, reached the main line after the first live trade |
+| Each week: do | `themis run <study> --input <live log> --input <replay> -- <the project's command>`, which writes `results/week-YYYY-WW.json` | `themis run` refuses on a dirty tree, or with the seal off the main line. `forward/same-dates-control`: no replay, or one of other dates, start or settings |
+| Each week: decide | `themis decide <study>/week-YYYY-WW --gate forward` | It refuses a week with no replay, or one on other settings, and stores nothing. `forward/match`: a week left undecided, or inputs that differ from a rebuild |
+| End | A settings change ends the run; new settings are a new run, sealed in a folder of its own | `forward/no-retune` |
+
 ## 5. The pack's rules
 
-Nineteen rules in six gates, beside the core's.
+Twenty-seven rules in seven gates, beside the core's.
 
 ### Gate: trials — attempts are counted honestly
 
@@ -134,6 +221,19 @@ Nineteen rules in six gates, beside the core's.
 | Rule | The promise | Parameters |
 | --- | --- | --- |
 | `live/off-by-default` | Every live-trading switch holds its safe value in the source, unless the owner granted that file its flip. | `switches`, `absent` |
+
+### Gate: forward — a live run is held to a replay of the same dates
+
+| Rule | The promise | Parameters |
+| --- | --- | --- |
+| `forward/sealed-before-start` | A forward run's seal reaches the main line before its first live trade. | `margin_hours` |
+| `forward/same-dates-control` | Each week of a forward run has a replay on the same dates, from the same start state, with the same settings. | `fields` |
+| `forward/match` | Each week's share of replay entries that also appear live is counted from the entries and read against the sealed lines. | `floor` |
+| `forward/gap-explained` | The gap between live and replay money is split into its sealed parts, and the remainder is read against its sealed line. | `tolerance` |
+| `forward/conditions-stable` | Every change in trading conditions recorded during a forward run is listed in that week's verdict. | — |
+| `forward/no-retune` | The settings fingerprint stays the same for the whole forward run. | — |
+| `forward/enough-trades` | A forward run gets no pass before its sealed number of trades. | `min_trades` |
+| `forward/risk-line` | A risk number past its sealed line stops a forward run, whatever else passes. | `required` |
 
 ### Core rules the pack configures
 
@@ -191,40 +291,123 @@ What the rules read, in more detail:
   core rule for every page still keeps this one for its studies' chart sizes.
 - **`scorecard/believable` and `scorecard/explainer`** bind every kind of study unless `kinds`
   names fewer, and a study whose kind cannot be read is always bound. Both honour `since`: a study
-  whose seal reached the main line before that date is left alone.
+  whose seal reached the main line before that date is left alone. A forward run is bound too.
+
+The eight forward rules read the studies whose seal is of kind `forward`; with none, each says
+"not configured". A bad week is the gate's verdict, not a breach: a rule fails only when the seal,
+a record or a stored verdict is missing or dishonest. A seal or a record that cannot be read is
+refused by every forward rule, and nothing else of that run is judged; a study whose seal cannot
+be read while it holds weekly records counts as a forward run, so a seal that breaks is refused,
+not passed over as "not configured".
+
+- **`forward/sealed-before-start`.** The seal is dated by the last main-line commit that changed
+  it, or changed an amendment record that names it (`Git.last_changes`), read to the second
+  (`Git.commit_time`): an edit made in place counts from the merge that brought the edit. A seal or
+  an amendment in the tree that differs from the main line's tip is not on the main line yet. The
+  first trade is the earliest `first_trade_at`, matched `live_at` or extra `at` in any week, as the
+  tree holds it or as any version of a week's record on the main line held it (`Git.versions`): a
+  `first_trade_at` typed later than an entry, or a record edited or removed once merged, does not
+  move it later. It needs no `since` and no release date. With `margin_hours`, the seal must arrive
+  that many hours before.
+- **`forward/same-dates-control`.** Each week's replay runs over the week's own `period`, from the
+  same `start` (each field: `balance` and `peak` written as 2 or 2.0 alike, `open_positions` a whole
+  number, `at` as one moment), on the
+  same `settings`, and on each field in `fields`. The weeks follow one another: no ISO week is
+  skipped, and each starts at the moment the one before it ends.
+- **`forward/match`.** Each missed and extra entry gives a reason; no entry is listed twice in a
+  week; each of the project's own lines is in every week; each week has a decision, and no
+  decision names a week whose record is gone; and the inputs a gate's decision names equal a
+  rebuild from the seal and the records, as `results/inputs-rebuilt` does for the marketing gate.
+  The owner's own call is not rebuilt, but a pass the owner stored where the gate, on the rebuilt
+  inputs, would not pass needs an unspent `forward` grant for that week. `floor` is the lowest
+  `pass` a seal may set for `match`.
+- **`forward/gap-explained`.** The parts are exactly the seal's `gap_parts`, and the parts and
+  `unexplained` add up to live less replay `net`, within `tolerance`.
+- **`forward/conditions-stable`.** A gate's decision holds the week's `conditions.changes` as its
+  `numbers.conditions_changes`, as the gate copies them; one dropped or altered there fails.
+- **`forward/no-retune`.** Every week's `live.settings` is the seal's `settings`. A settings change
+  ends the run: new settings are a new run, sealed in a folder of its own.
+- **`forward/enough-trades`.** The seal's `min_trades` is at least the rule's `min_trades`. A stored
+  `pass` with fewer trades to date fails, whether issued, typed, or the owner's with no `forward`
+  grant for that week.
+- **`forward/risk-line`.** Every week holds a number for each sealed risk line, and the seal draws
+  each risk id in `required`. Once a risk line is passed, that week and every later one is stored as
+  `stop` with the verdict FAIL, unless the owner overruled it with a `forward` grant for that week.
 
 ## 6. The gate functions
 
-A verdict is issued by a function. Three are built. Each reads the study's metrics and returns a
-decision, a verdict, whether the evidence was enough, a reason in words, and every number it
-computed.
+A verdict is issued by a function. Four are built. Each reads the study's metrics, or for
+`forward` the inputs built from the seal and the weekly records, and returns a decision, a
+verdict, whether the evidence was enough, a reason in words, and every number it computed.
 
 | Gate | The question | What it must beat | A pass needs |
 | --- | --- | --- | --- |
 | `signal` | Do higher values of the signal come before higher values of what follows? | The same two lists with the signal rotated against the forward values, which keeps each list's own stickiness | A rank correlation above zero and above that noise floor, on samples that do not overlap, with the same sign in all but one block. A drift both lists share is taken out first |
 | `entry` | Is an entry or exit better than a dumb entry? | Draws of a dumb entry on the same days, in the same window, on the same side | The trades pay on average after costs; each side pays when two sides are claimed; the mean sits in the top `alpha` of the dumb draws |
 | `tune` | Did a tuned setting earn its confirmation? | Its own stages, in order | The search stayed inside its sealed budget; in-sample, out-of-sample and the walk back over untouched periods all passed; then the sealed window, once |
+| `forward` | Is a live run holding up against its replay, week by week? | Its own sealed lines, read on a replay of the same dates | No risk line passed in any week; this week no line past its stop for its `running` weeks, every line inside its pass, every missed or extra entry for a known reason, every change in `changes_allowed`, and the money inside the range of each range day reached; and the sealed `min_trades` |
 
 The decisions are `promote`, `kill` and `defer`. The tuning gate says `full-pass`, `kill` and
-`not-confirmed`. Every gate follows the same order:
+`not-confirmed`. The forward gate says `pass`, `stop`, `look-closer` and `defer`. Every gate
+follows the same order:
 
 1. Missing or malformed inputs are a REFUSE. A gate never guesses.
 2. Too small a sample is a REFUSE, whatever its numbers look like.
 3. Economics first. A result that does not pay is a no before any significance is read.
 4. A "no" from a test too weak to have seen the effect is a REFUSE, "defer", and not a kill.
 
+**The forward gate.** `themis decide <study>/week-YYYY-WW --gate forward` builds its inputs with
+`pack.inputs["forward"]`: the seal's lines and every week up to that one, with the match counts,
+the line values, the remainder, the changes, the risk numbers, the range values, the trades and
+the settings. A week with no replay, or one on other settings, is refused there, and nothing is
+stored. The gate then answers in this order, and the first that holds is its answer:
+
+1. Malformed inputs: `defer`.
+2. A risk line passed in any week so far: `stop`. It stays: every later week is `stop` too.
+3. This week, a line past its `stop`, and so for `running` weeks in a row, each read on a sample of
+   at least its `min`; or a change this week the seal names in `changes_stop`: `stop`, for this
+   week. It asks the owner to pause and look; a later week is judged on its own, and its run of
+   weeks looks back over the earlier ones.
+4. This week, a line worse than its `pass`, a missed or extra entry for a reason the seal does not
+   know, a change not in `changes_allowed`, or a range day reached with the money outside it:
+   `look-closer`.
+5. Fewer trades so far than `min_trades`: `defer`.
+6. Otherwise `pass`.
+
+`match` is the share of the replay's entries that also appear live, read on matched and missed
+entries. `unexplained` is the size of the gap's remainder as Themis works it out: live less replay
+`net`, less the record's sealed parts, read on all the week's entries; a part the seal does not
+name takes nothing off it, and the record's own `unexplained` is held to it by
+`forward/gap-explained`. A week a line cannot be judged on, because its sample is none or under
+`min`, is passed over: it neither ends a run of weeks past the stop nor adds to one. Range day N
+falls N days after the run's first week began.
+
+| Word | Verdict | Enough evidence |
+| --- | --- | --- |
+| `pass` | PASS | Yes |
+| `stop` | FAIL | Yes |
+| `look-closer` | REFUSE | Yes: a person reads the week; a look-closer is never read as a pass |
+| `defer` | REFUSE | No |
+
 Each gate is calibrated: it is fed data with nothing in it and data with a known effect, many
 times, and the rates are measured. `themis calibrate` writes the receipt that
-`decision/calibrated` asks for. Measured at this release:
+`decision/calibrated` asks for; `themis calibrate forward` measures one gate. Measured at this
+release:
 
 | Gate | Says yes to noise (worst case) | Finds the planted effect |
 | --- | --- | --- |
 | `signal` | 6.2% | 98.3% |
 | `entry` | 5.2% | 97.8% |
 | `tune` | 0% | 100% |
+| `forward` | 0% | 100% |
 
-The `tune` gate reads outcomes that are true or false, so its cases are a list of every way a run
-can fall short, not random draws.
+The `tune` and `forward` gates read outcomes, not draws, so their cases are a list of every way a
+run, or a week, can fall short. For `forward`: a risk line passed this week or before, a line past
+its stop, a match past its stop for two weeks (and for two with a week between that it cannot be
+read on), a stop change this week, each line in its look zone, an unknown reason or none, an unallowed change, the money outside its range, too few
+trades, and each malformed input (a range day with no money, a sealed line or risk line missing,
+other settings, a count of trades its entries do not hold, no week, weeks out of order): 23
+cases, none passed. Two clean weeks past the count pass.
 
 A study cannot loosen a gate through its own metrics. An `alpha` above 0.10 is refused. `entry`
 needs 30 trades and 20 draws of the dumb entry; a study may ask for more trades, never for fewer.
@@ -252,6 +435,12 @@ Everything here belongs to the project.
 | `validity/power-stated` | `min_power` | The least power a test must have had for its fail to stand |
 | `validity/audit-reproduced` | `forbidden` | Modules no audit script may import |
 | `validity/same-basis` | `fields` | The fingerprint fields every run in a comparison must share, such as `window`, `settings`, `cost_model` or `session` |
+| `forward/sealed-before-start` | `margin_hours` | How many hours before the first live trade the seal must reach the main line; 0 when unset |
+| `forward/same-dates-control` | `fields` | Further fingerprint fields the live week and its replay must both state, with one value |
+| `forward/match` | `floor` | The lowest `pass` a seal may set for `match`; 0 when unset |
+| `forward/gap-explained` | `tolerance` | How far, in money, the parts and the remainder may add up from live less replay; 0.01 when unset |
+| `forward/enough-trades` | `min_trades` | The fewest trades a seal may ask for before any pass; 30 when unset |
+| `forward/risk-line` | `required` | The risk ids every forward seal must draw a line for |
 | `scorecard/explainer` | `max_bytes`, `max_controls` | The caps on the explainer page |
 | `scorecard/believable`, `scorecard/explainer` | `kinds` | The kinds of study the rule binds; every kind when unset |
 | `scorecard/rendering` | `max_chart_bytes` | The cap on one page or picture under `results/` |
@@ -313,10 +502,18 @@ read through `data.window`, or through `themis act holdout <window>`, which reco
 holds this floor. These are all at `enforce`: the order, prereg, trials, holdout and decision
 rules, `ledger/complete`, every validity rule but `validity/confirm-on-real-ticks`,
 `live/off-by-default`, `scorecard/complete`, `scorecard/believable`, `report/generated`,
-`config/locked` and `config/no-silent-weakening`. A gate says yes to noise at most one time in ten and finds a
-planted effect at least four times in five. `min_power` is at least 0.8, and
+`config/locked`, `config/no-silent-weakening`, and the eight forward rules. A gate says yes to
+noise at most one time in ten and finds a planted effect at least four times in five. `min_power`
+is at least 0.8, `min_trades` on `forward/enough-trades` is at least 30, and
 `live/off-by-default` refuses a file with no switch (`absent = "refuse"`).
-`config/standard-floor` lists every place the project sits below it.
+`config/standard-floor` lists every place the project sits below it. A project with no forward
+run sets the forward rules at `enforce` all the same: with no study sealed as `forward`, each says
+"not configured", and decides nothing.
+
+**Upgrading to 0.3.0.** 0.3.0 added the eight forward rules to `themis-trading/1` at `enforce`, and
+the floor `min_trades` 30 on `forward/enough-trades`, under the same standard id. A project that
+declares the standard lists eight deviations until it sets them at `enforce`, and a `strict` one
+fails `config/standard-floor` until then; with no forward run, each is then "not configured".
 
 ## 8. What a project's own code uses
 
@@ -397,6 +594,9 @@ Every rule has cases that pass, fail and refuse, and `themis prove` runs them. A
 | `validity/same-basis` | Rank two runs from two different sessions side by side | FAIL |
 | `live/off-by-default` | Flip a live-trading switch on a branch with no grant | FAIL |
 | `scorecard/rendering` | Two prices on one line, after a shorter fence inside a long one | FAIL |
+| `forward/sealed-before-start` | Merge the seal an hour after the first live trade | FAIL |
+| `forward/no-retune` | Trade a forward run's third week on another settings fingerprint | FAIL |
+| `forward/risk-line` | Store a week that fell past its risk line as look-closer | FAIL |
 | A gate function | Feed it noise; feed it a planted edge | It says no; it says yes |
 
 ## 11. What this pack cannot do
@@ -405,9 +605,23 @@ Every rule has cases that pass, fail and refuse, and `themis prove` runs them. A
 - **It cannot see a belief.** What someone learned during a look at sealed data is invisible.
 - **It cannot make data independent.** It reports the independent unit; it cannot enlarge it.
 - **The cost model is the project's.** A wrong cost gives a wrong net number, faithfully.
-- **It does not rebuild a gate's inputs.** The numbers a gate reads are written by the study's
-  own run. They are held by the provenance file and by the separate audit, not recomputed by
-  Themis.
+- **It does not rebuild a study's metrics.** The numbers the `entry`, `signal` and `tune` gates
+  read are written by the study's own run. They are held by the provenance file and by the
+  separate audit, not recomputed by Themis. The `forward` gate's inputs are built from the seal and
+  the weekly records, and `forward/match` builds them again; the records themselves are the
+  project's.
+- **It cannot see a change or a trade the record leaves out.** A forward run's weekly record is
+  written by the project's own script. A trade it does not list, or a change in trading conditions
+  it does not hold, is invisible to every forward rule and to the gate.
+- **A commit's time is the committer's clock.** `forward/sealed-before-start` reads the time the
+  main line's commit states. A clock set wrong moves the seal's arrival with it, and so does a
+  commit fast-forwarded or rebased onto the main line, which keeps the time it was made, not the
+  time it arrived. Merge a forward seal with a merge commit (or a host's merge or squash, which
+  stamps the time of the merge).
+- **A paired figure is the project's arithmetic.** Themis computes `match` and `unexplained` from
+  the record. A line of the project's own, such as the extra cost of a fill, is read as the record
+  gives it. Themis reads a project line's `n` as written: it cannot know whether `n` counts
+  entries, hours, days or orders, so it holds `n` only to being a whole number, 0 or more.
 - **The `signal` gate cannot tell a real link from a shape both lists share.** It takes out a
   steady drift, and no more. In a check at this release, two lists that shared a V shape and
   nothing else passed 36 times in 100. A cycle both lists share can pass too. The seal's own
@@ -435,4 +649,35 @@ parameter grid that ran unlogged, sealed data read by agents whose prompts never
 seal, a merge that joined a seal to its results, a study that stopped reproducing itself, a kill
 issued by a test with too little power, tuned settings that passed both test windows and then
 lost on unseen years, two runs ranked against each other on costs from different days, and a
-strategy whose source turned live trading on by default.
+strategy whose source turned live trading on by default. Each rule carries its incident in one
+line, which `themis explain <rule id>` prints:
+
+| Rule | Incident |
+| --- | --- |
+| `trials/settings-counted` | A grid of settings ran with nothing logged, so the best run looked like the only one tried. |
+| `trials/count-feeds-adjustment` | A figure was adjusted for the few trials of its own study, while the ledger held many more. |
+| `prereg/declared` | A plan was sealed with no bar in it, and the bar was chosen after the results were in. |
+| `prereg/provenance` | A study stopped reproducing itself, and nothing said which code and data had made its numbers. |
+| `holdout/guarded` | Sealed data was read by agents whose instructions never mentioned the seal. |
+| `holdout/one-signal-look` | Settings were tried on the unseen years again and again until they passed, and then lost. |
+| `holdout/pipeline-look-declared` | A check that the code ran on unseen data also showed how the idea would have done there. |
+| `validity/fills-on-tape` | A backtest booked fills at prices that never traded, and its profit was made of them. |
+| `validity/baselines` | A strategy looked skilled until it was laid beside simply holding, which had done as well. |
+| `validity/net-of-cost` | A result was quoted before costs, and the edge was smaller than the cost of trading it. |
+| `validity/power-stated` | An idea was killed by a test too small to see the effect it was looking for. |
+| `validity/audit-reproduced` | A study stopped reproducing its own numbers, and the check that should have seen it shared its code. |
+| `validity/confirm-on-real-ticks` | Tuned settings passed on a coarse price model, and lost once every tick was replayed. |
+| `validity/same-basis` | Two runs were ranked against each other though their costs came from different days, and the ranking measured the costs. |
+| `scorecard/complete` | A scorecard left its checks of real skill blank, and the result was read as if they had passed. |
+| `scorecard/believable` | A finding was quoted for weeks before anyone asked how many independent cases it rested on. |
+| `scorecard/explainer` | A result was explained by a page of sliders that no newcomer could follow. |
+| `scorecard/rendering` | A page showed two prices in one line, and the words between them were set as mathematics and lost. |
+| `live/off-by-default` | A strategy shipped with live trading on by default, and one attached copy would have traded real money. |
+| `forward/sealed-before-start` | A forward run's lines were written down after its first live week was seen, and fitted that week. |
+| `forward/same-dates-control` | A live week was laid beside a replay of other dates, from another balance, and the gap was read as the cost of trading live. |
+| `forward/match` | Live entries were paired with the replay's by hand, and the ones that did not fit were left out of the count. |
+| `forward/gap-explained` | The gap between live and replayed money was put down to costs, and nobody added the costs up to see that they fell short. |
+| `forward/conditions-stable` | A venue widened its spreads in the middle of a run, and that week's verdict never said so. |
+| `forward/no-retune` | Settings were changed in the middle of a forward run, and its weeks were still read as one run. |
+| `forward/enough-trades` | A forward run was called good after a handful of trades, and the next month undid it. |
+| `forward/risk-line` | A run fell past its loss limit while its other lines still looked fine, and it went on trading. |

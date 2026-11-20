@@ -1,0 +1,399 @@
+"""The forward kind: a live run, held week by week against a replay of the same dates.
+
+The eight rules are proven by their own worlds (themis/packs/trading/forward.py), and the gate by
+the shared gate tests. This file holds what lies between them: the builder that makes the gate's
+inputs from the seal and the records; `themis decide` and `themis calibrate` on a forward run; a
+project with no forward run; and the dry run, one past week laid against itself, then a missed
+entry, a cost jump and a settings change, each through `themis run` and the project's own script.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+from pathlib import Path
+
+import pytest
+
+from themis import engine, gates, pack
+from themis import manifest as manifests
+from themis.cli import EXIT_FAIL, EXIT_PASS, EXIT_REFUSE, main
+from themis.packs.trading import forward
+from themis.packs.trading.forward import STUDY, changed, seal_text, week_record
+from themis.proofs import World
+from themis.rule import RULES
+from themis.verdict import Verdict
+
+gates.load_all()
+pack.load("trading")
+
+
+def a_run(tmp_path: Path, **given: object) -> World:
+    """A forward run as the proofs build it: the seal merged on its own, and an honest week 48 and 49."""
+    world = World(tmp_path / "repo")
+    world.root.mkdir(parents=True)
+    forward._forward(world, **given)  # type: ignore[arg-type]
+    return world
+
+
+def built(world: World, week: str) -> dict:
+    return forward.build(world.root, manifests.load(world.root), f"{STUDY}/week-{week}")
+
+
+def verdict(world: World, rule_id: str) -> Verdict | None:
+    return engine.run_rule(RULES[rule_id], manifests.load(world.root), force=True).verdict
+
+
+def themis(world: World, *args: str) -> tuple[int, str]:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        code = main([args[0], "--root", str(world.root), *args[1:]])
+    return code, out.getvalue()
+
+
+# -- the inputs, built from the seal and the records --------------------------------------------
+
+
+def test_the_inputs_hold_the_seals_lines_and_every_week_up_to_the_one_decided(tmp_path: Path) -> None:
+    world = a_run(tmp_path, weeks=(48, 49, 50))
+    first, second = built(world, "2026-48"), built(world, "2026-49")
+    assert first["subject"] == f"{STUDY}/week-2026-48" and [week["week"] for week in first["weeks"]] == ["2026-48"]
+    assert [week["week"] for week in second["weeks"]] == ["2026-48", "2026-49"]  # not week 50: it came later
+    assert second["seal"]["lines"]["match"] == {"worse": "lower", "pass": 0.9, "stop": 0.8, "running": 2, "min": 0}
+    assert second["seal"]["lines"]["unexplained"] == {"worse": "higher", "pass": 20.0, "stop": 100.0, "running": 1,
+                                                      "min": 0}
+    assert second["seal"]["risk"] == {"day-loss": {"worse": "higher", "stop": 0.52}}
+    week = second["weeks"][1]
+    assert (week["matched"], week["missed"], week["extra"], week["trades"]) == (19, 1, 1, 20)
+    assert week["reasons"] == ["news pause", "server restart"] and week["unexplained"] == -3.0
+    assert week["lines"] == {"entry-cost": {"value": 0.3, "n": 38}} and week["risk"] == {"day-loss": 0.2}
+    assert json.loads(json.dumps(second)) == second  # what is stored reads back as what was built
+    answer = forward.forward(second)
+    assert (answer["decision"], answer["numbers"]["trades_to_date"]) == ("pass", 40)
+
+
+def test_a_range_day_is_read_in_the_week_that_holds_it(tmp_path: Path) -> None:
+    """Day N is N days after the run's first week began: day 3 falls in its first week, day 10 in its second."""
+    seal = {"ranges": "[3, 10]", "range-3": "{low = 9000, high = 11000}", "range-10": "{low = 9000, high = 11000}"}
+    world = a_run(tmp_path, seal=seal, changes={48: {"range": {"3": 10100.0}}, 49: {"range": {"10": 12000.0}}})
+    first, second = built(world, "2026-48")["weeks"][0], built(world, "2026-49")["weeks"][1]
+    assert (first["range_due"], first["range"]) == (["3"], {"3": 10100.0})
+    assert (second["range_due"], second["range"]) == (["10"], {"10": 12000.0})
+    assert forward.forward(built(world, "2026-49"))["decision"] == "look-closer"  # 12000 is above the range
+
+
+@pytest.mark.parametrize("given", [
+    {"changes": {49: {"live.net": -480.0}}},  # the remainder typed as -3, where the money leaves -603
+    {"changes": {49: {"live.net": -480.0, "gap.parts.other": -600.0}}},  # a part the seal does not name
+    {"changes": {49: {"live.net": -480.0}}, "rules": forward._rule("forward/gap-explained", "tolerance = 1000")},
+])
+def test_the_remainder_is_worked_out_from_the_money_and_the_sealed_parts(tmp_path: Path, given: dict) -> None:
+    """Themis computes `unexplained`: live less replay net, less the sealed parts. A small remainder typed
+    over a large one, or a part the seal does not name, takes nothing off it, whatever the tolerance."""
+    world = a_run(tmp_path, **given)
+    inputs = built(world, "2026-49")
+    assert inputs["weeks"][1]["unexplained"] == -480.0 - 150.0 + 27.0
+    answer = forward.forward(inputs)
+    assert answer["decision"] == "stop" and "unexplained was past its stop of 100" in answer["reason"]
+    if "rules" not in given:
+        assert verdict(world, "forward/gap-explained") is Verdict.FAIL  # the record's own figure disagrees
+
+
+def test_a_line_value_may_be_null_only_on_no_sample(tmp_path: Path) -> None:
+    world = a_run(tmp_path, changes={49: {"lines.entry-cost": {"value": None, "n": 0}}})
+    assert built(world, "2026-49")["weeks"][1]["lines"] == {"entry-cost": {"value": None, "n": 0}}
+    assert forward.read_week(f"{STUDY}/results/week-2026-49.json", json.dumps(changed(
+        week_record(49), {"lines.entry-cost": {"value": None, "n": 3}})))[1] == [
+        "the record.lines.entry-cost.value is null, and its n is 3: only a line read on no sample has no value"]
+    assert forward.read_week(f"{STUDY}/results/week-2026-49.json", json.dumps(changed(
+        week_record(49), {"lines.entry-cost.value": "high"})))[1] == [
+        "the record.lines.entry-cost.value must be a number, or null when its n is 0"]
+
+
+@pytest.mark.parametrize(("subject", "changes", "said"), [
+    ("work/fwd", {}, "named <study>/week-YYYY-WW"),
+    ("work/other/week-2026-48", {}, "work/other is not a study sealed as kind forward"),
+    (f"{STUDY}/week-2026-51", {}, f"there is no record {STUDY}/results/week-2026-51.json"),
+    (f"{STUDY}/week-2026-49", {48: {"replay": None}}, "week 2026-48 has no replay"),
+    (f"{STUDY}/week-2026-48", {48: {"live.settings": "77c0aa11", "replay.settings": "77c0aa11"}},
+     "week 2026-48 traded the settings 77c0aa11, and the seal's are 3f9a0c1d: a settings change ends the run"),
+    (f"{STUDY}/week-2026-48", {48: {"replay.settings": "77c0aa11"}}, "week 2026-48's replay used the settings 77c0aa11"),
+    (f"{STUDY}/week-2026-48", {49: {"period.from": "2026-11-30T00:00:00"}}, "the forward run cannot be read"),
+])
+def test_the_builder_refuses_what_it_cannot_build(tmp_path: Path, subject: str, changes: dict, said: str) -> None:
+    world = a_run(tmp_path, changes=changes)
+    with pytest.raises(ValueError, match=said.replace("(", r"\(").replace(".", r"\.")):
+        forward.build(world.root, manifests.load(world.root), subject)
+
+
+# -- themis decide and themis calibrate ---------------------------------------------------------
+
+
+def test_a_week_is_decided_from_its_records_and_the_gate_is_calibrated(tmp_path: Path) -> None:
+    world = a_run(tmp_path)
+    world.commit("two weeks")
+    code, said = themis(world, "decide", f"{STUDY}/week-2026-48", "--gate", "forward")
+    assert code == EXIT_REFUSE and "defer. 20 trades so far, and the seal asks for 40 before any pass" in said
+    code, said = themis(world, "decide", f"{STUDY}/week-2026-49", "--gate", "forward")
+    assert code == EXIT_PASS and "PASS: pass. every line is inside its pass" in said
+    stored = json.loads((world.root / "decisions/work-fwd-week-2026-49.json").read_text())
+    assert stored["inputs"] == "decision-inputs/work-fwd-week-2026-49.json" and stored["gate_version"] == "1"
+    assert stored["numbers"]["conditions_changes"] == [] and stored["enough_evidence"] is True
+    code, said = themis(world, "calibrate", "forward")
+    assert code == EXIT_PASS and "trading/forward v1: says yes to noise 0.0% of the time" in said
+    receipt = json.loads((world.root / "receipts/calibration/trading-forward.json").read_text())
+    assert (receipt["false_alarm_rate"], receipt["power"]) == (0.0, 1.0)
+    for rule_id in ("decision/issued-by-gate", "decision/enough-evidence", "decision/calibrated", "forward/match",
+                    "forward/conditions-stable", "forward/enough-trades", "forward/risk-line"):
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id
+
+
+def test_a_week_with_no_replay_is_refused_at_decide_and_nothing_is_stored(tmp_path: Path) -> None:
+    world = a_run(tmp_path, changes={48: {"replay": None}})
+    code, said = themis(world, "decide", f"{STUDY}/week-2026-48", "--gate", "forward")
+    assert code == EXIT_REFUSE and "week 2026-48 has no replay" in said
+    assert not (world.root / "decisions").exists() and not (world.root / "decision-inputs").exists()
+
+
+def test_a_kinder_line_typed_into_the_stored_inputs_fails_the_rebuild_and_not_the_gate(tmp_path: Path) -> None:
+    """The gate reads only what it is given, so a decision re-asked of it on typed inputs agrees: it is
+    the rebuild that catches the typing."""
+    world = a_run(tmp_path, decided=None, changes={49: {"entries.matched": [], "live.trades": 1, "entries.missed": [
+        {"id": f"e{n}", "at": forward._at(49, 10 + n), "reason": "news pause"} for n in range(1, 21)]}},
+        inputs={49: {"seal.lines.match.pass": 0.0, "seal.lines.match.stop": 0.0, "seal.min_trades": 1}},
+        typed={49: {"decision": "pass", "verdict": "pass"}})
+    assert verdict(world, "decision/issued-by-gate") is Verdict.PASS
+    assert verdict(world, "forward/match") is Verdict.FAIL
+
+
+# -- a project with no forward run, and the rules that bind every kind --------------------------
+
+FORWARD_RULES = sorted(rule_id for rule_id in RULES if rule_id.startswith("forward/"))
+STANDARD = """
+[project]
+name = "research"
+packs = ["trading"]
+standard = "themis-trading/1"
+
+[trading]
+work = "work/*"
+
+[rules]
+"prereg/declared" = "enforce"
+""" + "".join(f'"{rule_id}" = "enforce"\n' for rule_id in FORWARD_RULES)
+
+
+def test_a_standard_project_with_no_forward_run_finds_each_forward_rule_not_configured(tmp_path: Path) -> None:
+    """The standard holds the eight forward rules at enforce. A project that runs no forward run sets
+    them so and is not refused for it: each says what it would need, and decides nothing."""
+    from themis import standards
+
+    world = World(tmp_path / "repo")
+    world.root.mkdir()
+    world.manifest(STANDARD)
+    world.write("work/a/PRE-REG.md", "---\nkind: tune\nwindows: [w]\nwindow-w: {from = \"2025-01-01\", to = "
+                                     "\"2025-12-31\"}\ngate: tune\niterations: 9\nrisk_rules: r.json\n---\n")
+    world.commit("a tune study, and no forward run")
+    manifest = manifests.load(world.root)
+    report = engine.run(manifest)
+    found = {result.id: result for result in report.results}
+    assert len(FORWARD_RULES) == 8
+    for rule_id in FORWARD_RULES:
+        assert found[rule_id].status == "not configured", rule_id
+        assert "seal a study as kind forward" in found[rule_id].note and not found[rule_id].counts
+    assert found["prereg/declared"].verdict is Verdict.PASS and report.verdict is Verdict.PASS
+    standard = standards.declared(manifest)
+    assert standard is not None and set(FORWARD_RULES) <= set(standard.levels)
+    assert standard.floors["forward/enough-trades"] == {"min_trades": 30}
+    assert not [found for found in standards.deviations(manifest, standard) if found.rule.startswith("forward/")]
+    (world.root / "themis.toml").write_text(STANDARD.replace('"forward/match" = "enforce"', ""), encoding="utf-8")
+    below = standards.deviations(manifests.load(world.root), standard)
+    assert [(found.rule, found.what) for found in below if found.rule.startswith("forward/")] == [
+        ("forward/match", "level is warn; the standard requires enforce")]
+
+
+def test_a_forward_seal_that_breaks_after_its_weeks_were_recorded_is_refused_by_every_forward_rule(
+        tmp_path: Path) -> None:
+    """With no readable seal the run would drop out, and every forward rule would say "not configured"
+    while its records and decisions stand. It is refused instead, as a record that cannot be read is."""
+    world = a_run(tmp_path, decided=None, files={f"{STUDY}/PRE-REG.md": seal_text().replace("stop_rule: ",
+                                                                                           "stop_rule ")})
+    for rule_id in FORWARD_RULES:
+        result = engine.run_rule(RULES[rule_id], manifests.load(world.root), force=True)
+        assert (result.status, result.verdict) == ("ran", Verdict.REFUSE), rule_id
+        assert "the forward run's seal cannot be read" in result.findings[0].message
+    with pytest.raises(ValueError, match="the forward run's seal cannot be read"):
+        built(world, "2026-48")
+    world.remove(f"{STUDY}/results/week-2026-48.json")  # a study with a broken seal and no weeks is no run
+    world.remove(f"{STUDY}/results/week-2026-49.json")
+    assert engine.run_rule(RULES["forward/match"], manifests.load(world.root), force=True).status == "not configured"
+
+
+@pytest.mark.parametrize(("how", "expected"), [("--ff-only", Verdict.PASS), ("--no-ff", Verdict.FAIL)])
+def test_a_seal_fast_forwarded_onto_the_main_line_keeps_the_time_it_was_made(tmp_path: Path, how: str,
+                                                                             expected: Verdict) -> None:
+    """The limit the trading page states: a seal committed on a branch at 08:00, three hours before the
+    first live trade, and merged two days later. Fast-forwarded, the main line holds the branch's own
+    commit and its time; merged with a merge commit, the merge's time is read, and the seal is late."""
+    world = World(tmp_path / "repo")
+    world.root.mkdir()
+    world.manifest(forward.MANIFEST)
+    world.commit("the project")
+    world.branch("seal")
+    world.on("2026-11-23", 8)
+    world.write(f"{STUDY}/PRE-REG.md", seal_text())
+    world.commit("the seal")
+    world.checkout("main")
+    world.on("2026-11-25", 9)
+    world.git("merge", "-q", how, "-m", "merge the seal", "seal")
+    world.write(forward._week_path(48), json.dumps(week_record(48)))
+    assert verdict(world, "forward/sealed-before-start") is expected
+
+
+@pytest.mark.parametrize("rule_id", ["scorecard/believable", "scorecard/explainer"])
+def test_the_scorecard_rules_bind_a_forward_run_unless_kinds_says_otherwise(tmp_path: Path, rule_id: str) -> None:
+    world = a_run(tmp_path)
+    assert verdict(world, rule_id) is Verdict.FAIL  # a forward run with records answers like any study
+    world.manifest(forward.MANIFEST + forward._rule(rule_id, 'kinds = ["strategy", "signal"]'))
+    assert verdict(world, rule_id) is Verdict.REFUSE  # not bound: nothing is left to inspect
+
+
+# -- the dry run: one past week laid against itself, then three faults --------------------------
+
+DRY = {"min_trades": 30, "line-entry-cost": '{worse = "higher", pass = 0.05, stop = 0.2}',
+       "gap_parts": "[costs, missed, extra]"}
+WEEK = "2026-48"
+
+
+def dry_run(tmp_path: Path) -> World:
+    """The project, its weekly script, and a forward seal merged on its own before the week."""
+    from forward_journal import JOURNAL
+
+    world = World(tmp_path / "dry")
+    world.root.mkdir(parents=True)
+    world.manifest(forward.MANIFEST)
+    world.write(".gitignore", ".themis/\n__pycache__/\n")
+    world.write("journal.py", JOURNAL)
+    world.commit("start")
+    world.pull_request("seal", {f"{STUDY}/PRE-REG.md": seal_text(**DRY)})
+    return world
+
+
+def dry_week(world: World, live: list, replay: list, **given: object) -> tuple[int, str]:
+    """The week's logs committed, its record written by the script through `themis run`, then decided."""
+    import sys
+
+    from forward_journal import write_logs
+
+    logs = write_logs(world.root, WEEK, live, replay, **given)  # type: ignore[arg-type]
+    world.commit("the week's logs")
+    inputs = [part for path in logs for part in ("--input", path)]
+    code, said = themis(world, "run", STUDY, *inputs, "--", sys.executable, "journal.py", STUDY, WEEK, *logs)
+    assert code == EXIT_PASS, said
+    world.commit("the week's record")
+    return themis(world, "decide", f"{STUDY}/week-{WEEK}", "--gate", "forward")
+
+
+@pytest.mark.parametrize(("count", "code", "said"), [
+    (25, EXIT_REFUSE, "REFUSE: defer. 25 trades so far, and the seal asks for 30 before any pass"),
+    (35, EXIT_PASS, "PASS: pass. every line is inside its pass and every entry's reason is known, on 35 trades"),
+])
+def test_the_dry_run_one_past_week_against_itself_passes_or_defers(tmp_path: Path, count: int, code: int,
+                                                                   said: str) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past = trades(WEEK, count)
+    got, text = dry_week(world, past, past)
+    assert got == code and said in text
+    record = json.loads((world.root / STUDY / "results" / f"week-{WEEK}.json").read_text())
+    assert record["gap"] == {"parts": {"costs": 0.0, "missed": 0.0, "extra": 0.0}, "unexplained": 0.0}
+    assert (len(record["entries"]["matched"]), record["entries"]["missed"], record["entries"]["extra"]) == (count, [], [])
+    for rule_id in FORWARD_RULES:
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id
+
+
+def test_the_dry_run_a_missed_entry_with_no_reason_is_looked_at_and_fails_the_count(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past = trades(WEEK, 25)
+    code, said = dry_week(world, past[1:], past)
+    assert code == EXIT_REFUSE and "look-closer. an entry was missed or extra for a reason the seal does not " \
+                                   "know: none given" in said
+    assert verdict(world, "forward/match") is Verdict.FAIL  # an entry missed with no reason
+    for rule_id in ("forward/gap-explained", "forward/same-dates-control", "decision/issued-by-gate"):
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id  # the missed entry's money explains the gap
+
+
+def test_the_dry_run_a_missed_entry_for_a_sealed_reason_is_counted_and_holds(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past = trades(WEEK, 35)
+    code, said = dry_week(world, past[1:], past, reasons={past[0]["id"]: "news pause"})
+    assert code == EXIT_PASS and "on 34 trades so far" in said  # 34 of 35 entries matched: 0.97, inside 0.9
+    for rule_id in FORWARD_RULES:
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id
+
+
+def test_the_dry_run_a_cost_jump_stops_the_run_and_the_gap_still_adds_up(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past, dearer = trades(WEEK, 25), trades(WEEK, 25, cost=0.5)
+    code, said = dry_week(world, dearer, past)
+    assert code == EXIT_FAIL and "stop. entry-cost was past its stop of 0.2 for 1 week(s) in a row, to week 2026-48" in said
+    record = json.loads((world.root / STUDY / "results" / f"week-{WEEK}.json").read_text())
+    assert record["lines"]["entry-cost"] == {"value": 0.4, "n": 25} and record["gap"]["parts"]["costs"] == -10.0
+    for rule_id in ("forward/gap-explained", "forward/match", "forward/risk-line", "decision/issued-by-gate"):
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id
+
+
+def test_the_dry_run_a_settings_change_is_refused_and_fails_no_retune(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past = trades(WEEK, 25)
+    code, said = dry_week(world, past, past, settings="77c0aa11")
+    assert code == EXIT_REFUSE and ("week 2026-48 traded the settings 77c0aa11, and the seal's are 3f9a0c1d: a "
+                                    "settings change ends the run") in said
+    assert not (world.root / "decisions").exists()
+    assert verdict(world, "forward/no-retune") is Verdict.FAIL
+    assert verdict(world, "forward/same-dates-control") is Verdict.FAIL  # the replay ran on the sealed settings
+
+
+def test_the_seal_and_the_weekly_record_read_as_their_schemas_say() -> None:
+    from themis import records
+
+    assert set(forward.WEEK) == {"week", "period", "live", "replay", "entries", "fill_costs", "gap", "lines",
+                                 "conditions", "risk", "range"}
+    seal, problems = forward.read_seal(f"{STUDY}/PRE-REG.md", records.frontmatter(seal_text()) or {})
+    assert problems == [] and seal is not None and (seal.min_trades, seal.gap_parts) == (40, ("spread", "commission",
+                                                                                               "swap"))
+    week, problems = forward.read_week(f"{STUDY}/results/week-2026-48.json", json.dumps(week_record(48)))
+    assert problems == [] and week is not None and week.name == "2026-48"
+    assert forward.read_week(f"{STUDY}/results/week-2026-54.json", "{}")[1] == ["2026 has no ISO week 54"]
+    assert "named by its ISO week" in forward.read_week(f"{STUDY}/results/week-48.json", "{}")[1][0]
+    typed = changed(week_record(48), {"lines.match": {"value": 1.0, "n": 20}})
+    assert "which Themis computes from the record itself" in forward.read_week(
+        f"{STUDY}/results/week-2026-48.json", json.dumps(typed))[1][0]
+    missing = changed(week_record(48), {"fill_costs": forward.DROP})
+    assert forward.read_week(f"{STUDY}/results/week-2026-48.json", json.dumps(missing))[1] == [
+        "the record.fill_costs is required"]
+
+
+def problems_of(record: dict, name: str = "week-2026-48.json") -> list[str]:
+    return forward.read_week(f"{STUDY}/results/{name}", json.dumps(record))[1]
+
+
+def test_a_record_with_an_empty_period_a_name_in_other_digits_or_a_number_past_a_float_is_refused() -> None:
+    honest = week_record(48)
+    assert problems_of(honest) == []
+    empty = changed(honest, {"period.to": honest["period"]["from"]})
+    assert problems_of(empty) == ["the record's period does not end after it starts"]
+    assert problems_of(honest, "week-2026-٤٨.json") == [  # 48 in Arabic-Indic digits: not a week's name
+        "a weekly record is named by its ISO week, week-YYYY-WW.json, such as week-2026-48.json"]
+    for where in ("live.net", "risk.day-loss"):
+        assert problems_of(changed(honest, {where: 10 ** 400})) == [f"the record.{where} must be a finite number"]

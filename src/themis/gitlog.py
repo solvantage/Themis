@@ -104,6 +104,32 @@ class Git:
         return found
 
     @functools.lru_cache(maxsize=None)
+    def last_changes(self, ref: str) -> dict[str, int]:
+        """For each file, the position on the main line of the newest commit that changed it: one that
+        added, edited, renamed or deleted it. `arrivals` keeps the first; this keeps the last, so an
+        edit made in place after a moment is seen as made after it. A merge is read against its first
+        parent, as `arrivals` reads it."""
+        out = self.run("log", "--first-parent", "-m", "--name-only", "--format=@%H", ref)
+        if out is None:
+            return {}
+        positions = {commit: position for position, commit in enumerate(self.main_line(ref))}
+        found: dict[str, int] = {}
+        position: int | None = None
+        for line in out.splitlines():
+            if line.startswith("@"):
+                position = positions.get(line[1:].strip())
+            elif line.strip() and position is not None:
+                found[line] = max(found.get(line, position), position)
+        return found
+
+    def versions(self, ref: str, path: str) -> list[str]:
+        """Every text this file held on the main line, newest first: one for each main-line commit that
+        changed it, a deletion left out. A file removed from the tree is still read here."""
+        out = self.run("log", "--first-parent", "-m", "--format=%H", ref, "--", path)
+        texts = [self.show(commit, path) for commit in (out or "").split()]
+        return [text for text in texts if text is not None]
+
+    @functools.lru_cache(maxsize=None)
     def main_line(self, ref: str) -> list[str]:
         """Every commit of the main line, oldest first: an `arrivals` position indexes this list."""
         out = self.run("rev-list", "--first-parent", "--reverse", ref)
@@ -119,6 +145,13 @@ class Git:
     def commit_date(self, commit: str) -> str | None:
         out = self.run("show", "-s", "--format=%cs", commit)
         return out.strip() if out else None
+
+    def commit_time(self, commit: str) -> str | None:
+        """The commit's committer time in strict ISO 8601, with its UTC offset (`%cI`), such as
+        2026-11-20T09:00:05+07:00, or Z for UTC in some versions of git: the moment it was made, by
+        the committer's clock."""
+        out = self.run("show", "-s", "--format=%cI", commit)
+        return out.strip() if out and out.strip() else None
 
     def changed_against(self, ref: str) -> list[str]:
         """Every path that differs from that commit: committed since, staged, unstaged or untracked."""

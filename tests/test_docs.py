@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from themis import gates, pack
+from themis.packs.trading import forward, process
 from themis.rule import RULES
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -225,6 +226,151 @@ def page(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+# -- seals, records, incidents, the standard and the calibration --------------------------------
+
+RECORD = "results/week-YYYY-WW.json"  # a forward run's weekly record, inside its study
+INCIDENTS = {"trading": "## 12. Where the rules come from"}
+CALIBRATED = {"trading": "Says yes to noise"}  # the header of each pack page's calibration table
+
+
+def seal_problems(text: str, name: str = "trading") -> list[str]:
+    """Each kind's row in the kinds table ticks every field its seal must state (`process.NEEDS`)."""
+    rows = table_rows(section(text, SECTIONS[name]["kinds"]), "Kind")
+    found = []
+    for kind, needed in sorted(process.NEEDS.items()):
+        ticked = {token for first, tokens in rows if kind in TICKED.findall(first) for token in tokens}
+        found += [f"the {kind} row does not tick {field}" for field in needed if field not in ticked]
+    return found
+
+
+def record_problems(text: str) -> list[str]:
+    """The text ticks the weekly record's path and every top-level key of `forward.WEEK`, outside its
+    fenced examples."""
+    ticked = set(TICKED.findall(re.sub(r"^```.*?^```[^\n]*$", "", text, flags=re.MULTILINE | re.DOTALL)))
+    found = [] if any(token.endswith(RECORD) for token in ticked) else [f"the record's path, {RECORD}, is not ticked"]
+    return found + [f"the record's key {key} is not ticked" for key in forward.WEEK if key not in ticked]
+
+
+def incident_problems(text: str, name: str = "trading") -> list[str]:
+    """The section on where the rules come from has a row for each of the pack's rules, whose
+    incident is the rule's own `learned` line."""
+    cells = {found.group(1): found.group(2) for found in map(ROW.match, section(text, INCIDENTS[name]).splitlines())
+             if found}
+    found = []
+    for rule in sorted(RULES.values(), key=lambda rule: rule.id):
+        if rule.pack != name:
+            continue
+        if rule.id not in cells:
+            found.append(f"no incident row for {rule.id}")
+        elif cells[rule.id] != rule.learned:
+            found.append(f"{rule.id}: the page says {cells[rule.id]!r}, the rule {rule.learned!r}")
+    return found
+
+
+def standard_problems(text: str, standard: str = "themis-trading/1", name: str = "trading") -> list[str]:
+    """The standard's paragraph names each rule the standard holds at its level: by its id, ticked, or
+    by its gate's word in the prose around the ticks ("the order, prereg ... rules")."""
+    start = text.index("**The standard.**")
+    paragraph = text[start:text.find("\n\n", start)]
+    ticked, words = set(TICKED.findall(paragraph)), set(re.findall(r"[a-z]+", TICKED.sub(" ", paragraph).lower()))
+    return [f"the standard's paragraph does not name {rule_id}" for rule_id in sorted(pack.load(name).standards[standard].levels)
+            if rule_id not in ticked and rule_id.split("/")[0] not in words]
+
+
+def calibration_problems(text: str, name: str) -> list[str]:
+    """`--gate <name>` appears on the page for each gate function, and its calibration table, where
+    the page has one, has a row for each."""
+    names = sorted(pack.load(name).gates)
+    found = [f"--gate {gate} appears nowhere on the page" for gate in names if f"--gate {gate}" not in text]
+    if name in CALIBRATED:
+        lines = text.splitlines()
+        start = next((number for number, line in enumerate(lines) if line.startswith("|") and CALIBRATED[name] in line),
+                     len(lines))
+        listed = set()
+        for line in lines[start + 2:]:
+            if not line.startswith("|"):
+                break
+            listed |= set(TICKED.findall(line.split("|")[1]))
+        found += [f"the calibration table has no row for the gate {gate}" for gate in names if gate not in listed]
+    return found
+
+
+def forward_cell_problems(text: str) -> list[str]:
+    """The forward gate's "A pass needs" cell names every step of its order: the risk lines, a line's
+    `running` weeks, its pass, the reasons, `changes_allowed`, the ranges and `min_trades`."""
+    rows = [line for line in section(text, SECTIONS["trading"]["gates"]).splitlines() if line.startswith("| `forward` |")]
+    cell = rows[0].strip("|").split("|")[-1] if rows else ""
+    ticked = set(TICKED.findall(cell))
+    return ([f"the forward gate's pass cell does not tick {key}" for key in ("running", "changes_allowed", "min_trades")
+             if key not in ticked]
+            + [f"the forward gate's pass cell does not name the {word}" for word in ("risk", "pass", "reason", "range")
+               if word not in cell])
+
+
+def alike_problems(text: str) -> list[str]:
+    """A start field the page says is written "as 2 or 2.0 alike" is a number field of the record, not a
+    whole number, which the record refuses as 2.0."""
+    found = re.search(r"start` \(each field: (.*?) written as 2 or 2\.0 alike", text, re.DOTALL)
+    named = TICKED.findall(found.group(1)) if found else []
+    return ([] if named else ["the page does not say which start fields are written as 2 or 2.0 alike"]) + [
+        f"start.{name} is not a number field of the record" for name in named if forward.START.get(name) is not None
+        and getattr(forward.START[name], "spec", None) is not float]
+
+
+def upgrade_problems(text: str, standard: str = "themis-trading/1", gate: str = "forward") -> list[str]:
+    """The page says what 0.3.0 added to the standard: the forward gate's rules, counted in words."""
+    start = text.find("**Upgrading to 0.3.0.**")
+    paragraph = text[start:text.find("\n\n", start)] if start >= 0 else ""
+    added = sum(rule_id.startswith(f"{gate}/") for rule_id in pack.load("trading").standards[standard].levels)
+    said = f"the {ONES[added]} {gate} rules"
+    return [] if f"`{standard}`" in paragraph and said in paragraph else [
+        f"no upgrade note says 0.3.0 added {said} to {standard}"]
+
+
+def test_the_forward_gates_pass_cell_names_every_step_of_its_order() -> None:
+    text = page(DOCUMENTS["trading"])
+    assert forward_cell_problems(text) == []
+    assert forward_cell_problems(text.replace("every change in `changes_allowed`, ", "", 1)) == [
+        "the forward gate's pass cell does not tick changes_allowed"]
+
+
+def test_only_number_fields_of_the_start_are_said_to_be_written_alike() -> None:
+    text = page(DOCUMENTS["trading"])
+    assert alike_problems(text) == []
+    planted = text.replace("`balance` and `peak` written", "`balance`, `open_positions` and `peak` written", 1)
+    assert alike_problems(planted) == ["start.open_positions is not a number field of the record"]
+
+
+def test_the_upgrade_note_names_what_the_standard_gained() -> None:
+    text = page(DOCUMENTS["trading"])
+    assert upgrade_problems(text) == []
+    assert upgrade_problems(text.replace("**Upgrading to 0.3.0.**", "**Upgrading.**")) == [
+        "no upgrade note says 0.3.0 added the eight forward rules to themis-trading/1"]
+
+
+def test_each_kind_row_ticks_every_field_its_seal_must_state() -> None:
+    assert seal_problems(page(DOCUMENTS["trading"])) == []
+
+
+@pytest.mark.parametrize(("path", "heading"), [(DOCUMENTS["trading"], "## 3. Records"),
+                                               ("docs/extending.md", "### Adapters")])
+def test_the_weekly_record_is_described_key_by_key(path: str, heading: str) -> None:
+    assert record_problems(section(page(path), heading)) == []
+
+
+def test_each_trading_rule_has_its_incident_row() -> None:
+    assert incident_problems(page(DOCUMENTS["trading"])) == []
+
+
+def test_the_standard_paragraph_names_every_rule_it_holds() -> None:
+    assert standard_problems(page(DOCUMENTS["trading"])) == []
+
+
+@pytest.mark.parametrize("name", PACKS)
+def test_each_gate_function_is_named_and_calibrated_on_its_page(name: str) -> None:
+    assert calibration_problems(page(DOCUMENTS[name]), name) == []
+
+
 def test_the_readme_counts_the_core_rules_and_gates_as_they_are() -> None:
     assert count_problems(page("README.md"), "core") == []
 
@@ -295,17 +441,20 @@ def test_a_pack_page_whose_opening_has_no_count_fails() -> None:
                                                                                          opening=True)
 
 
-@pytest.mark.parametrize(("name", "row"), [("trading", "| `tune` | Searches"), ("marketing", "| `asset` |")])
+@pytest.mark.parametrize(("name", "row"), [("trading", "| `tune` | Searches"), ("trading", "| `forward` | Trades live"),
+                                           ("marketing", "| `asset` |")])
 def test_a_kinds_row_deleted_fails(name: str, row: str) -> None:
     assert kinds_problems(_without_row(page(DOCUMENTS[name]), row), name)
 
 
-@pytest.mark.parametrize(("name", "row"), [("trading", "| `entry` | Is an entry"), ("marketing", "| `results` |")])
+@pytest.mark.parametrize(("name", "row"), [("trading", "| `entry` | Is an entry"), ("trading", "| `forward` | Is a live"),
+                                           ("marketing", "| `results` |")])
 def test_a_gate_function_row_deleted_fails(name: str, row: str) -> None:
     assert gate_problems(_without_row(page(DOCUMENTS[name]), row), name)
 
 
 @pytest.mark.parametrize(("name", "row"), [("trading", "| | `absent` |"), ("trading", "| `[trading]` | `work` |"),
+                                           ("trading", "| `forward/same-dates-control` | `fields` |"),
                                            ("trading", "| | `looks` |"), ("trading", "| `[trading.costs.<name>]` |"),
                                            ("marketing", "| `min_loops` |"), ("marketing", "| `spend.unit` |"),
                                            ("marketing", "| `results.retire.views_below_share_of_baseline` |"),
@@ -323,3 +472,50 @@ def test_a_row_for_a_kind_or_rule_that_does_not_exist_fails() -> None:
 def test_a_command_missing_from_the_interfaces_section_fails() -> None:
     assert command_problems(_without_row(page("DESIGN.md"), "| `themis act ACTION"), commands()) == [
         "themis act is not in DESIGN.md section 15"]
+
+
+def test_a_seal_field_left_out_of_its_kinds_row_fails() -> None:
+    text = page(DOCUMENTS["trading"])
+    assert seal_problems(text.replace("`min_trades`, `stop_rule`, ", "`min_trades`, ", 1)) == [
+        "the forward row does not tick stop_rule"]
+    planted = text.replace("The same five: `binding`, `gate`, `nulls`, `windows`, `mde`", "The same five")
+    assert seal_problems(planted) == [f"the signal row does not tick {field}" for field in process.TESTED]
+
+
+def test_a_record_key_or_its_path_left_unticked_fails() -> None:
+    records_ = section(page(DOCUMENTS["trading"]), "## 3. Records")
+    assert record_problems(records_.replace("`fill_costs`", "fill_costs")) == ["the record's key fill_costs is not ticked"]
+    assert record_problems(records_.replace(f"/{RECORD}`", "/week.json`")) == [
+        f"the record's path, {RECORD}, is not ticked"]
+    adapters = section(page("docs/extending.md"), "### Adapters")
+    assert record_problems(adapters.replace("| `range` |", "| range |")) == ["the record's key range is not ticked"]
+
+
+def test_an_incident_row_deleted_or_reworded_fails() -> None:
+    text = page(DOCUMENTS["trading"])
+    learned = RULES["forward/risk-line"].learned
+    assert incident_problems(_without_row(text, f"| `forward/risk-line` | {learned[:20]}")) == [
+        "no incident row for forward/risk-line"]
+    planted = text.replace(f"| `forward/no-retune` | {RULES['forward/no-retune'].learned}",
+                           "| `forward/no-retune` | Settings were changed.")
+    assert incident_problems(planted) == [
+        f"forward/no-retune: the page says 'Settings were changed.', the rule {RULES['forward/no-retune'].learned!r}"]
+
+
+def test_a_rule_the_standard_holds_left_out_of_its_paragraph_fails() -> None:
+    text = page(DOCUMENTS["trading"])
+    planted = text.replace("`config/locked`, `config/no-silent-weakening`", "`config/no-silent-weakening`", 1)
+    assert standard_problems(planted) == ["the standard's paragraph does not name config/locked"]
+    planted = text.replace("prereg, trials, holdout", "prereg, holdout", 1)
+    assert standard_problems(planted) == ["the standard's paragraph does not name trials/count-feeds-adjustment",
+                                          "the standard's paragraph does not name trials/settings-counted"]
+
+
+def test_a_gate_left_off_its_page_or_its_calibration_table_fails() -> None:
+    text = page(DOCUMENTS["trading"])
+    assert calibration_problems(_without_row(text, "| `forward` | 0% |"), "trading") == [
+        "the calibration table has no row for the gate forward"]
+    assert calibration_problems(text.replace("--gate tune", "--gate tuning"), "trading") == [
+        "--gate tune appears nowhere on the page"]
+    assert calibration_problems(page(DOCUMENTS["marketing"]).replace("--gate results", "--gate result"), "marketing") == [
+        "--gate results appears nowhere on the page"]

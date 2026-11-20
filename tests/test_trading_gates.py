@@ -16,10 +16,10 @@ import pytest
 
 from themis import pack
 from themis.pack import kit
-from themis.packs.trading import gates, stats
+from themis.packs.trading import forward, gates, stats
 
 trading = pack.load("trading")
-GATES = ("entry", "signal", "tune")
+GATES = ("entry", "signal", "tune", "forward")
 KEYS = {"decision", "verdict", "enough_evidence", "reason", "numbers"}
 
 
@@ -149,6 +149,7 @@ def test_a_test_against_few_draws_is_weaker_than_the_bell_curve_says() -> None:
 PLANTED_ENTRY = gates.entry_case(random.Random(1), edge=0.5)
 NOISE_ENTRY = gates.entry_case(random.Random(4), edge=0.0)
 PLANTED_SIGNAL = gates.signal_case(random.Random(3), correlation=0.25)
+CLEAN_FORWARD = forward.forward_case(forward.week_case("2026-48"), forward.week_case("2026-49"))
 
 
 def _noise_signal(size: int = 250, **changes: object) -> dict:
@@ -165,6 +166,13 @@ ANSWERS = {
     "tune passes": (gates.tune, gates.tune_case(), "full-pass", "pass", True),
     "tune fails": (gates.tune, gates.tune_case(out_of_sample=False), "kill", "fail", True),
     "tune is not confirmed": (gates.tune, gates.tune_case(holdout=None), "not-confirmed", "refuse", False),
+    "forward passes": (forward.forward, CLEAN_FORWARD, "pass", "pass", True),
+    "forward stops": (forward.forward, forward.forward_case(forward.week_case("2026-48", risk={"day-loss": 0.6}),
+                                                            forward.week_case("2026-49")), "stop", "fail", True),
+    "forward looks closer": (forward.forward, forward.forward_case(
+        forward.week_case("2026-48"), forward.week_case("2026-49", matched=17, missed=3, trades=18)), "look-closer",
+                             "refuse", True),
+    "forward defers": (forward.forward, forward.forward_case(forward.week_case("2026-48")), "defer", "refuse", False),
 }
 
 
@@ -233,9 +241,35 @@ BAD_TUNE = {
     "a confirming model that is not a name": {"confirm_model": 3},
     "a confirming model left blank": {"confirm_model": " "},
 }
+_SEAL, _WEEKS = CLEAN_FORWARD["seal"], CLEAN_FORWARD["weeks"]
+BAD_FORWARD = {
+    "no seal": {"seal": None},
+    "no weeks": {"weeks": []},
+    "a week that is not a table": {"weeks": [None, _WEEKS[1]]},
+    "a count of trades written as a word": {"weeks": [_WEEKS[0], {**_WEEKS[1], "trades": "many"}]},
+    "a count below zero": {"weeks": [_WEEKS[0], {**_WEEKS[1], "missed": -1}]},
+    "more trades than its live entries": {"weeks": [_WEEKS[0], {**_WEEKS[1], "trades": 40}]},
+    "a value that is not finite": {"weeks": [_WEEKS[0], {**_WEEKS[1], "unexplained": float("nan")}]},
+    "weeks out of order": {"weeks": [_WEEKS[1], _WEEKS[0]]},
+    "one week twice": {"weeks": [_WEEKS[0], _WEEKS[0]]},
+    "a week on other settings": {"weeks": [_WEEKS[0], {**_WEEKS[1], "settings": "77c0aa11"}]},
+    "a sealed line with no value": {"weeks": [_WEEKS[0], {**_WEEKS[1], "lines": {}}]},
+    "a sealed risk line with no figure": {"weeks": [_WEEKS[0], {**_WEEKS[1], "risk": {}}]},
+    "a range day with no money": {"weeks": [_WEEKS[0], {**_WEEKS[1], "range_due": ["10"]}]},
+    "a range day the seal does not draw": {"weeks": [_WEEKS[0], {**_WEEKS[1], "range_due": ["11"], "range": {"11": 1.0}}]},
+    "a seal with no match line": {"seal": {**_SEAL, "lines": {k: v for k, v in _SEAL["lines"].items() if k != "match"}}},
+    "a match line read the wrong way": {"seal": {**_SEAL, "lines": {
+        **_SEAL["lines"], "match": {"worse": "higher", "pass": 0.9, "running": 1, "min": 0}}}},
+    "a stop on the better side of its pass": {"seal": {**_SEAL, "lines": {
+        **_SEAL["lines"], "entry-cost": {"worse": "higher", "pass": 0.43, "stop": 0.2, "running": 1, "min": 0}}}},
+    "a line that runs over no weeks": {"seal": {**_SEAL, "lines": {
+        **_SEAL["lines"], "entry-cost": {"worse": "higher", "pass": 0.43, "running": 0, "min": 0}}}},
+    "a count of no trades": {"seal": {**_SEAL, "min_trades": 0}},
+}
 BAD = [(gate, base, name, change) for gate, base, cases in (
     (gates.entry, PLANTED_ENTRY, BAD_ENTRY), (gates.signal, PLANTED_SIGNAL, BAD_SIGNAL),
-    (gates.tune, gates.tune_case(), BAD_TUNE)) for name, change in cases.items()]
+    (gates.tune, gates.tune_case(), BAD_TUNE), (forward.forward, CLEAN_FORWARD, BAD_FORWARD))
+    for name, change in cases.items()]
 
 
 @pytest.mark.parametrize(("gate", "base", "name", "change"), BAD, ids=[f"{bad[0].__name__}: {bad[2]}" for bad in BAD])
@@ -245,10 +279,55 @@ def test_a_gate_refuses_inputs_it_cannot_trust(gate, base: dict, name: str, chan
     assert (answer["verdict"], answer["decision"], answer["enough_evidence"]) == ("refuse", "defer", False), name
 
 
-@pytest.mark.parametrize("gate", [gates.entry, gates.signal, gates.tune])
+@pytest.mark.parametrize("gate", [gates.entry, gates.signal, gates.tune, forward.forward])
 @pytest.mark.parametrize("metrics", [{}, None, [], "metrics", {"trades": []}])
 def test_no_gate_passes_on_nothing(gate, metrics) -> None:
     assert gate(metrics)["verdict"] == "refuse"
+
+
+# --- forward -----------------------------------------------------------------------------------
+
+LEVERAGE = [{"at": "2026-11-24T10:00:00+00:00", "what": "leverage", "from": 1.0, "to": 2.0}]
+
+
+@pytest.mark.parametrize(("first", "then"), [
+    ({"risk": {"day-loss": 0.6}}, "stop"),  # a risk line's stop stays
+    ({"changes": LEVERAGE}, "pass"),  # a change the seal stops on stops its own week
+    ({"lines": {"entry-cost": {"value": 0.9, "n": 48}}}, "pass"),  # so does a line past its stop
+])
+def test_only_a_risk_lines_stop_stays_for_the_weeks_after_it(first: dict, then: str) -> None:
+    week = forward.week_case
+    assert forward.forward(forward.forward_case(week("2026-48", **first)))["decision"] == "stop"
+    assert forward.forward(forward.forward_case(week("2026-48", **first), week("2026-49")))["decision"] == then
+
+
+def test_a_line_stops_only_a_week_that_ends_its_run_past_the_stop() -> None:
+    """match runs over 2 weeks: two weeks past its stop stop the second, and a clean third passes; a week
+    it cannot be read on is passed over, neither ending the run nor adding to it."""
+    week, past = forward.week_case, {"matched": 15, "missed": 5, "trades": 16}
+    two = [week("2026-48", **past), week("2026-49", **past)]
+    assert forward.forward(forward.forward_case(*two))["decision"] == "stop"
+    assert forward.forward(forward.forward_case(*two, week("2026-50")))["decision"] == "pass"
+    unread = week("2026-49", matched=0, missed=0, trades=1)
+    assert forward.forward(forward.forward_case(week("2026-48", **past), unread,
+                                                week("2026-50", **past)))["decision"] == "stop"
+
+
+@pytest.mark.parametrize("held", [{"value": None, "n": 0}, {"value": 0.0, "n": 0}])
+def test_a_line_read_on_no_sample_is_never_judged(held: dict) -> None:
+    """A project line with no sample this week: null, or the 0.0 a project already writes. With no
+    `min`, a lower-is-worse line on 0.0 would be read as past its stop."""
+    lines = {**CLEAN_FORWARD["seal"]["lines"], "fill-share": {"worse": "lower", "pass": 0.9, "stop": 0.8,
+                                                             "running": 1, "min": 0}}
+    weeks = [{**week, "lines": {**week["lines"], "fill-share": held}} for week in CLEAN_FORWARD["weeks"]]
+    answer = forward.forward({**CLEAN_FORWARD, "seal": {**CLEAN_FORWARD["seal"], "lines": lines}, "weeks": weeks})
+    assert answer["decision"] == "pass" and answer["numbers"]["lines"]["fill-share"]["zone"] is None
+    weeks[1]["lines"]["fill-share"] = {"value": 0.0, "n": 5}  # read on a sample, the same 0.0 stops it
+    assert forward.forward({**CLEAN_FORWARD, "seal": {**CLEAN_FORWARD["seal"], "lines": lines},
+                            "weeks": weeks})["decision"] == "stop"
+    weeks[1]["lines"]["fill-share"] = {"value": None, "n": 5}  # no value on a sample: malformed
+    assert forward.forward({**CLEAN_FORWARD, "seal": {**CLEAN_FORWARD["seal"], "lines": lines},
+                            "weeks": weeks})["decision"] == "defer"
 
 
 # --- entry -------------------------------------------------------------------------------------

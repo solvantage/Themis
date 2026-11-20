@@ -86,10 +86,30 @@ def _scalar(text: str) -> Any:
     return text
 
 
+def _items(inner: str) -> list[str]:
+    """A list's items, split at each comma outside quotes. An item that starts with a quote runs to
+    the same quote, commas and all; a quote inside a bare word is just a character."""
+    items, current, quote = [], "", None
+    for char in inner:
+        if quote:
+            current += char
+            quote = None if char == quote else quote
+        elif char in "\"'" and not current.strip():
+            current, quote = current + char, char
+        elif char == ",":
+            items, current = [*items, current], ""
+        else:
+            current += char
+    if quote:
+        raise ValueError(f"a list item opens a quote it does not close: [{inner}]")
+    return [item for item in [*items, current] if item.strip()]
+
+
 def frontmatter(text: str) -> dict[str, Any] | None:
     """The simple `key: value` block at the top of a markdown file, or None when there is none.
 
-    Values are text, numbers, true or false, or a list written as `[a, b]`. Nothing deeper: a
+    Values are text, numbers, true or false, or a list written as `[a, b]`. A list is split at its
+    commas, but for one inside a quoted item: `["a, b", c]` holds two items. Nothing deeper: a
     record that needs more than this belongs in a `.toml` file.
     """
     lines = text.splitlines()
@@ -108,7 +128,7 @@ def frontmatter(text: str) -> dict[str, Any] | None:
             raise ValueError(f"frontmatter line is not `key: value`: {line.strip()!r}")
         value = found["value"].strip()
         if value.startswith("[") and value.endswith("]"):
-            data[found["key"]] = [_scalar(item) for item in value[1:-1].split(",") if item.strip()]
+            data[found["key"]] = [_scalar(item) for item in _items(value[1:-1])]
         else:
             data[found["key"]] = _scalar(value)
     return data

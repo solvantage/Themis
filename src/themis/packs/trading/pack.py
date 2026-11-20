@@ -47,6 +47,7 @@ pack = register(Pack(
         "signal": "predicts and books no trades: the signal scorecard, the report, an audit",
         "data": "describes and selects nothing: charts with how-to-read boxes; costs no trial",
         "tune": "searches a strategy's settings: a sealed search, every setting a trial, one look at unseen data",
+        "forward": "trades live under sealed settings, beside a replay of the same dates: a record and a decision a week",
     },
 ))
 
@@ -96,7 +97,8 @@ pack.actions[HOLDOUT] = data.act  # `themis act holdout <study>/<window>` writes
 
 #: The floor a project holds when it declares this standard. It may tighten anything. The rules
 #: named here keep a result from being chosen after the fact, counted short, shown unseen data
-#: twice, booked at prices that never traded, decided by hand, or shipped trading live.
+#: twice, booked at prices that never traded, decided by hand, or shipped trading live; and a
+#: forward run from being sealed late, read against the wrong replay, retuned, or passed early.
 pack.standards["themis-trading/1"] = Standard(
     "themis-trading/1",
     levels={rule_id: "enforce" for rule_id in (
@@ -109,11 +111,14 @@ pack.standards["themis-trading/1"] = Standard(
         "validity/audit-reproduced", "validity/same-basis", "live/off-by-default",
         "decision/issued-by-gate", "decision/enough-evidence", "decision/calibrated",
         "scorecard/complete", "scorecard/believable", "report/generated",
+        "forward/sealed-before-start", "forward/same-dates-control", "forward/match", "forward/gap-explained",
+        "forward/conditions-stable", "forward/no-retune", "forward/enough-trades", "forward/risk-line",
     )},
     floors={
         "decision/calibrated": {"max_false_alarm": 0.1, "min_power": 0.8},
         "validity/power-stated": {"min_power": 0.8},
         "trials/count-feeds-adjustment": {"penalty": 0},
         "live/off-by-default": {"absent": "refuse"},
+        "forward/enough-trades": {"min_trades": 30},
     },
 )

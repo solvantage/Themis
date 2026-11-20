@@ -7,6 +7,7 @@
     <study>/results/scorecard.csv    the scorecard's lines
     <study>/results/report.html      the report
     <study>/results/explainer/index.html   one short page for a newcomer, when the study has one
+    <study>/results/week-YYYY-WW.json      one week of a forward run (forward.py)
     <study>/AUDIT.md                 how the independent check ended
     <study>/README.md                the verdict in plain words
 
@@ -27,7 +28,7 @@ from themis.rule import Context
 
 SEAL = ["PRE-REG*.md"]
 RESULTS = ["results/**"]
-KINDS = ("strategy", "signal", "data", "tune")
+KINDS = ("strategy", "signal", "data", "tune", "forward")
 METRICS = "results/metrics.json"
 PROVENANCE = "results/provenance.json"
 TRADES = "results/trades.csv"

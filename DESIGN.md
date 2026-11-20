@@ -189,10 +189,10 @@ what each must produce.
 | --- | --- | --- | --- | --- |
 | 1 Log | `themis new` | A ledger record of that name already exists | A trial | An item |
 | 2 Seal | None: the plan is merged on its own | The plan lacks a field its kind requires (a pack rule) | Pre-registration | The brief |
-| 3 Do | `themis run <unit> -- <command>` | The seal is not on the main line; the tree is dirty | A study run | Making pictures and clips |
-| 4 Check | `themis attest`, `themis check` | A row is ticked by someone who is not its judge | An independent audit | A frame check; a second reader |
-| 5 Decide | `themis decide` | The evidence is too little to decide | A verdict | Lead, keep or retire |
-| 6 Report | `themis report` | A required part of the report was not produced | A scorecard | A loop report |
+| 3 Do | `themis run <unit> -- <command>` | The seal is not on the main line; the tree is dirty | A study run; in a forward run, each week's run, which writes its weekly record | Making pictures and clips |
+| 4 Check | `themis attest`, `themis check` | A row is ticked by someone who is not its judge | An independent audit; a forward run has none | A frame check; a second reader |
+| 5 Decide | `themis decide` | The evidence is too little to decide | A verdict; in a forward run, one each week: pass, stop, look-closer or defer | Lead, keep or retire |
+| 6 Report | `themis report` | A required part of the report was not produced | A scorecard; a forward run has none | A loop report |
 | 7 Hand off | `themis checkpoint` | A stated fact has no receipt | The checkpoint | The checkpoint |
 
 The commands are a convenience. **The rules are the law.** `themis check` reads git history and
@@ -221,8 +221,10 @@ core's rules and every pack's in one place, with each rule's gate, promise, leve
 count, is written from the rules themselves by `themis describe --markdown`, so it is never out
 of date. The pages written by hand are held to the code by `tests/test_docs.py`: each rule's row
 and promise here and on its pack's page, the counts here, in the README and at the top of each
-pack page, each pack's kinds, gate functions and parameters, and every command `themis --help`
-lists in section 15.
+pack page, each pack's kinds, gate functions and parameters, the fields each kind's seal must
+state, the keys of the trading pack's weekly record, each trading rule's incident, the rules its
+standard holds, each gate's calibration row and its `--gate` name, and every command `themis
+--help` lists in section 15.
 
 ### Gate: order — things happen in the declared order
 

@@ -21,7 +21,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from themis import records, work
-from themis.packs.trading import data, units
+from themis.packs.trading import data, forward, units
 from themis.rule import Context, Param, proof, rule
 from themis.schema import Choice, Required
 
@@ -72,18 +72,30 @@ FIELDS = {
     "mde": (lambda v: type(v) in (int, float) and v > 0, "a number above 0", "the smallest effect worth seeing"),
     "iterations": (lambda v: _whole(v) and v > 0, "a whole number above 0", "how many settings may be tried"),
     "risk_rules": (_text, "text", "the risk rules every setting must obey"),
+    "settings": (_text, "text", "the fingerprint of the settings the live run and every replay use"),
+    "min_trades": (lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0, "a whole number above 0",
+                   "how many trades a forward run needs before any pass"),
+    "stop_rule": (_text, "text", "who stops trading, and what must happen before a restart"),
+    "lines": (lambda v: isinstance(v, list) and bool(v), "a list with an entry",
+              "the lines each week is read against, match and unexplained among them"),
+    "risk": (lambda v: isinstance(v, list), "a list", "the risk lines that stop the run, whatever else passes"),
+    "ranges": (lambda v: isinstance(v, list), "a list", "the days since the start on which the live money is read"),
+    "gap_parts": (lambda v: isinstance(v, list), "a list", "the parts the gap between live and replay money is split into"),
+    "reasons": (lambda v: isinstance(v, list), "a list", "the known reasons for an entry missed or extra"),
     "commit": (lambda v: _hex(v, 7, 40), "7 to 40 hex characters", "the commit the run was made on"),
     "clean": (lambda v: v is True, "true", "a fingerprint taken on a dirty tree pins nothing"),
     "inputs": (lambda v: isinstance(v, dict) and bool(v) and all(_hex(item, 64, 64) for item in v.values()),
                "a table that gives each input's path a sha256 of 64 hex characters", "what the run read"),
 }
 TESTED = ("binding", "gate", "nulls", "windows", "mde")  # NEEDS: what the seal of each kind of study must state
-NEEDS = {"strategy": TESTED, "signal": TESTED, "data": (), "tune": ("windows", "gate", "iterations", "risk_rules")}
+NEEDS = {"strategy": TESTED, "signal": TESTED, "data": (), "tune": ("windows", "gate", "iterations", "risk_rules"),
+         forward.KIND: ("gate", "settings", "min_trades", "stop_rule", "lines", "risk", "ranges", "gap_parts",
+                        "reasons")}
 SEAL_FIX = "state it in the seal's frontmatter; a seal already merged changes only through an amendment record"
 RERUN = "run the study again on a clean tree; the run writes the commit, clean = true and a sha256 for each input"
 
 
-def _unstated(held: dict[str, Any], fields: tuple[str, ...], what: str) -> list[str]:
+def unstated(held: dict[str, Any], fields: tuple[str, ...], what: str) -> list[str]:
     """Each needed field that is missing, or is not what it must be, in plain words."""
     found = []
     for field in fields:
@@ -329,10 +341,12 @@ def declared(ctx: Context) -> None:
         kind = plan.get("kind")
         if not isinstance(kind, str) or kind not in NEEDS:
             said = "names no kind" if kind is None else f"names the kind {kind!r}"
-            ctx.breach(f"the seal {said}; a kind is strategy, signal, data or tune", where=path, fix=SEAL_FIX)
+            ctx.breach(f"the seal {said}; a kind is strategy, signal, data, tune or forward", where=path, fix=SEAL_FIX)
             continue
-        for fault in _unstated(plan, NEEDS[kind], f"seal of this {kind} study"):
+        for fault in unstated(plan, NEEDS[kind], f"seal of this {kind} study"):
             ctx.breach(fault, where=path, fix=SEAL_FIX)
+        for fault in forward.seal_problems(plan) if kind == forward.KIND else ():
+            ctx.breach(fault, where=path, fix=SEAL_FIX)  # its lines, risk lines and ranges, each an inline table
         named = plan.get("windows") if "windows" in NEEDS[kind] else None
         for name in named if isinstance(named, list) else []:
             if str(name) not in windows.of(unit):
@@ -379,7 +393,7 @@ _prove("prereg/declared", _sealed, [
     ("a data study states its kind and nothing more", "pass", None, {"kind": "data", **BARE}),
     ("a tune seal with its windows, gate, budget and risk rules", "pass", None, TUNE),
     ("a seal that names no kind", "fail", "names no kind", {"kind": None}),
-    ("a kind that is not one of the four", "fail", "names the kind 'backtest'", {"kind": "backtest"}),
+    ("a kind that is not one of the five", "fail", "names the kind 'backtest'", {"kind": "backtest"}),
     ("a strategy seal with no binding clause", "fail", "does not state binding", {"binding": None}),
     ("a signal seal with no gate", "fail", "this signal study does not state gate", {"kind": "signal", "gate": None}),
     ("a list of nulls that is empty", "fail", "nulls in the seal of this strategy study must be", {"nulls": "[]"}),
@@ -408,6 +422,53 @@ _prove("prereg/declared", _sealed, [
     ("no study is sealed yet", "refuse", "nothing was inspected", {"file": "notes.md"}),
 ])
 
+#: A forward seal that states its whole plan: its settings, its count, its lines, its risk lines and its ranges.
+FORWARD = {
+    **BARE, "kind": "forward", "gate": "forward", "settings": "3f9a0c1d", "min_trades": 220,
+    "stop_rule": "the owner stops it; a restart is a new run, sealed anew", "lines": "[match, unexplained, entry-cost]",
+    "line-match": '{worse = "lower", pass = 0.9, stop = 0.8, running = 2}',
+    "line-unexplained": '{worse = "higher", pass = 50, stop = 200}',
+    "line-entry-cost": '{worse = "higher", pass = 0.43, stop = 0.86, min = 30}',
+    "risk": "[day-loss]", "line-day-loss": '{worse = "higher", stop = 0.52}',
+    "ranges": "[30, 61]", "range-30": "{low = 9500, high = 12500}", "range-61": "{low = 9000, high = 15000}",
+    "gap_parts": "[spread, commission, swap]", "reasons": "[news pause, server restart]",
+    "changes_allowed": "[spread]", "changes_stop": "[leverage]",
+}
+_prove("prereg/declared", _sealed, [
+    ("a forward seal with its settings, its count, its lines, its risk lines and its ranges", "pass", None, FORWARD),
+    ("a forward seal with no lists of changes, and no risk line or range", "pass", None,
+     {**FORWARD, "changes_allowed": None, "changes_stop": None, "risk": "[]", "line-day-loss": None, "ranges": "[]",
+      "range-30": None, "range-61": None}),
+    ("a forward seal with no settings", "fail", "does not state settings", {**FORWARD, "settings": None}),
+    ("a count of trades written as a word", "fail", "min_trades in the seal of this forward study must be a whole",
+     {**FORWARD, "min_trades": "many"}),
+    ("a forward seal that names another gate", "fail", "a forward seal names the gate forward, not entry",
+     {**FORWARD, "gate": "entry"}),
+    ("a forward seal that draws no match line", "fail", "lines in the seal must hold match",
+     {**FORWARD, "lines": "[unexplained, entry-cost]", "line-match": None}),
+    ("a line with no table", "fail", "names the line entry-cost and has no line-entry-cost",
+     {**FORWARD, "line-entry-cost": None}),
+    ("a line whose stop is on the better side of its pass", "fail", "on the better side of its pass",
+     {**FORWARD, "line-match": '{worse = "lower", pass = 0.8, stop = 0.9}'}),
+    ("a match line read the wrong way round", "fail", "line-match.worse must be lower",
+     {**FORWARD, "line-match": '{worse = "higher", pass = 0.9}'}),
+    ("a line run over no weeks", "fail", "line-match.running must be a whole number, 1 or more",
+     {**FORWARD, "line-match": '{worse = "lower", pass = 0.9, stop = 0.8, running = 0}'}),
+    ("a risk line with a pass as well", "fail", "line-day-loss.pass is not a known key",
+     {**FORWARD, "line-day-loss": '{worse = "higher", pass = 0.3, stop = 0.52}'}),
+    ("a range with its low above its high", "fail", "has its low, 12500, above its high, 9500",
+     {**FORWARD, "range-30": "{low = 12500, high = 9500}"}),
+    ("a range day with no table", "fail", "names the day 61 in ranges and has no range-61",
+     {**FORWARD, "range-61": None}),
+    ("a line table for a line the seal does not name", "fail", "draws a line that neither lines nor risk names",
+     {**FORWARD, "line-slippage": '{worse = "higher", pass = 1}'}),
+    ("a change both allowed and a stop", "fail", "the change spread is both allowed and a stop",
+     {**FORWARD, "changes_stop": "[spread, leverage]"}),
+    ("a reason quoted with a comma in it", "pass", None, {**FORWARD, "reasons": '["news, pause", server restart]'}),
+    ("a list item that opens a quote it does not close", "refuse", "a list item opens a quote it does not close",
+     {**FORWARD, "changes_stop": '["leverage, margin]'}),
+])
+
 
 # -- prereg/provenance --------------------------------------------------------------------------
 
@@ -424,7 +485,7 @@ def provenance(ctx: Context) -> None:
             ctx.breach("this study holds results and no provenance file", where=unit, fix=RERUN)
             continue
         held = units.read_json(ctx, path)  # None is a file that cannot be read, which is refused
-        for fault in _unstated(held, ("commit", "clean", "inputs"), "provenance") if held is not None else []:
+        for fault in unstated(held, ("commit", "clean", "inputs"), "provenance") if held is not None else []:
             ctx.breach(fault, where=path, fix=RERUN)
 
 

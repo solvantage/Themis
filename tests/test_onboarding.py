@@ -1,7 +1,8 @@
-"""The onboarding guide's cases G1 and T4, run as the guide tells them.
+"""The onboarding guide's cases G1, T4 and T5, run as the guide tells them.
 
 Each case runs in a world built from scratch: G1 in a plain docs-and-scripts site, T4 in a
-trading project whose outside tester is a stand-in script. Everything Themis prints on the way is
+trading project whose outside tester is a stand-in script, T5 in a forward run whose weekly script
+is a stand-in too (tests/forward_journal.py). Everything Themis prints on the way is
 gathered, and every message the guide quotes for the case, in its "What Themis says" column, must
 be in it. So the guide cannot quote a message this release does not print, and a message that
 changes fails here until the guide says it again.
@@ -346,7 +347,142 @@ def test_t4_a_strategy_tuned_in_an_outside_tester_start_to_finish_and_its_corner
     assert said_as_quoted(every, "T4", study=study) == []
 
 
-@pytest.mark.parametrize("case", ["G1", "T4"])
+# -- T5: a forward run, week by week ------------------------------------------------------------
+
+FORWARD_RULES = ("sealed-before-start", "same-dates-control", "match", "gap-explained", "conditions-stable",
+                 "no-retune", "enough-trades", "risk-line")
+FORWARD = """
+[project]
+name = "forward"
+packs = ["trading"]
+
+[trading]
+work = "forward/*"
+
+[rules]
+"config/valid" = "enforce"
+"prereg/declared" = "enforce"
+"decision/issued-by-gate" = "enforce"
+"decision/calibrated" = "enforce"
+""" + "".join(f'"forward/{name}" = "enforce"\n' for name in FORWARD_RULES) + """
+[rules."scorecard/believable"]
+kinds = ["strategy", "signal"]      # a forward run ships no README of its own
+
+[rules."scorecard/explainer"]
+kinds = ["strategy", "signal"]
+"""
+FORWARD_SEAL = """---
+kind: forward
+title: Breakout, live beside its replay
+gate: forward
+settings: 3f9a0c1d
+min_trades: 60
+stop_rule: the owner stops the run; a restart is a new run, sealed anew
+lines: [match, unexplained, entry-cost]
+line-match: {worse = "lower", pass = 0.90, stop = 0.80, running = 2}
+line-unexplained: {worse = "higher", pass = 20, stop = 100}
+line-entry-cost: {worse = "higher", pass = 0.43, stop = 0.86}
+risk: [day-loss]
+line-day-loss: {worse = "higher", stop = 0.52}
+ranges: []
+gap_parts: [costs, missed, extra]
+reasons: [news pause]
+changes_allowed: [spread]
+changes_stop: [leverage]
+---
+
+Trade the tuned settings live, replay them over each week's own dates from the week's own start, and
+read each week against the lines above.
+"""
+
+
+def forward_run(tmp_path: Path) -> tuple[Session, str]:
+    """T5 up to its seal: the project, the logged run, and its seal merged on its own before day 1."""
+    from forward_journal import JOURNAL
+
+    world = World(tmp_path / "forward")
+    world.root.mkdir(parents=True)
+    world.manifest(FORWARD)
+    world.write(".gitignore", ".themis/\n__pycache__/\n")
+    world.write("journal.py", JOURNAL)
+    world.commit("start")
+    session = Session(world)
+    assert session.themis("new", "breakout-live", "--question", "does the live run hold up against its replay?") == (
+        EXIT_PASS)
+    [ledger] = (world.root / "ledger").glob("*.toml")
+    study = tomllib.loads(ledger.read_text())["work"]
+    world.commit("log the run")
+    world.pull_request("seal", {f"{study}/PRE-REG.md": FORWARD_SEAL})
+    assert session.themis("calibrate", "forward") == EXIT_PASS
+    world.commit("the forward gate's calibration receipt")
+    return session, study
+
+
+def week(session: Session, study: str, name: str, live: list, replay: list | None, **given: object) -> int:
+    """One week as the guide runs it: the logs committed, `themis run` writing the record through the
+    project's script, then `themis decide`. Returns what decide exited with."""
+    from forward_journal import write_logs
+
+    logs = write_logs(session.world.root, name, live, replay, **given)  # type: ignore[arg-type]
+    session.world.commit(f"the logs of week {name}")
+    inputs = [part for path in logs for part in ("--input", path)]
+    assert session.themis("run", study, *inputs, "--", sys.executable, "journal.py", study, name, *logs) == EXIT_PASS
+    session.world.commit(f"week {name}")
+    code = session.themis("decide", f"{study}/week-{name}", "--gate", "forward")
+    session.world.commit(f"week {name}, decided")
+    return code
+
+
+def test_t5_a_forward_run_week_by_week_and_its_corners_cut(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    session, study = forward_run(tmp_path / "honest")
+    assert session.verdict("prereg/declared") is Verdict.PASS
+    first = trades("2026-48", 20)
+    assert week(session, study, "2026-48", first, first) == EXIT_REFUSE  # defer: 20 trades of 60
+    second = trades("2026-49", 20)
+    assert week(session, study, "2026-49", second[3:], second,
+                reasons={trade["id"]: "news pause" for trade in second[:3]}) == EXIT_REFUSE  # look-closer: 0.85
+    third = trades("2026-50", 25)
+    assert week(session, study, "2026-50", third, third) == EXIT_PASS  # 62 trades, every line inside
+    fourth = trades("2026-51", 20)
+    assert week(session, study, "2026-51", fourth, fourth, risk=0.61) == EXIT_FAIL  # stop
+    for rule_id in ("decision/issued-by-gate", "decision/calibrated", *(f"forward/{name}" for name in FORWARD_RULES)):
+        assert session.verdict(rule_id) is Verdict.PASS, rule_id
+    assert session.themis("check") == EXIT_PASS
+    sessions = [session]
+
+    # Corners cut, one world each.
+    session, study = forward_run(tmp_path / "retune")
+    first, second = trades("2026-48", 20), trades("2026-49", 20)
+    assert week(session, study, "2026-48", first, first) == EXIT_REFUSE
+    assert week(session, study, "2026-49", second, second, settings="77c0aa11") == EXIT_REFUSE  # nothing stored
+    assert not (session.world.root / "decisions" / f"{study.replace('/', '-')}-week-2026-49.json").exists()
+    assert session.themis("check", "forward/no-retune") == EXIT_FAIL
+    sessions.append(session)
+
+    session, study = forward_run(tmp_path / "no-replay")
+    assert week(session, study, "2026-48", trades("2026-48", 20), None) == EXIT_REFUSE
+    assert session.themis("check", "forward/same-dates-control") == EXIT_FAIL
+    sessions.append(session)
+
+    session, study = forward_run(tmp_path / "by-hand")
+    first = trades("2026-48", 20)
+    assert week(session, study, "2026-48", first, first) == EXIT_REFUSE
+    stored = session.world.root / "decisions" / f"{study.replace('/', '-')}-week-2026-48.json"
+    stored.write_text(json.dumps({**json.loads(stored.read_text()), "decision": "pass", "verdict": "pass"}))
+    session.world.commit("a kinder verdict, typed")
+    assert session.themis("check", "decision/issued-by-gate") == EXIT_FAIL
+    assert session.themis("check", "forward/enough-trades") == EXIT_FAIL
+    sessions.append(session)
+
+    every = Session(session.world)
+    every.said = [each.text() for each in sessions]
+    assert len(quotes("T5")) >= 8
+    assert said_as_quoted(every, "T5", study=study) == []
+
+
+@pytest.mark.parametrize("case", ["G1", "T4", "T5"])
 def test_the_guide_has_the_case(case: str) -> None:
     assert quotes(case)
 
