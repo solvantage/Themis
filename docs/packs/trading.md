@@ -135,14 +135,14 @@ a key left out or a value of the wrong shape, and the record is refused.
 | Key | Holds |
 | --- | --- |
 | `week` | The ISO week, `YYYY-WW`, as the file is named |
-| `period` | `from`, the moment the week starts, and `to`, the moment the next one starts |
-| `live` | `run`, `settings` (the fingerprint), `start` (`at`, `balance`, `open_positions`, `peak`), `trades`, `net`, and `first_trade_at`, empty only in a week with no trade; any further fingerprint fields the project names |
+| `period` | `from`, the moment the week starts, and `to`, the moment the next one starts. It lies in the ISO week the file names: its middle, in UTC, falls in that week, and it runs for 8 days at most, so a short first week, a broker's clock hours off UTC and a change of clocks all fit |
+| `live` | `run`, `settings` (the fingerprint), `start` (`at`, `balance`, `open_positions`, `peak`), `trades`, `net`, and `first_trade_at`, empty only in a week with no trade; any further fingerprint fields the project names. `trades` is the number of matched and extra entries: each live trade is one or the other |
 | `replay` | The same settings replayed: `run`, `settings`, its own `period`, `start`, `trades`, `net`; or `null` in a week with no replay |
-| `entries` | `matched`: an entry both took, with `id`, `live_at` and `replay_at`. `missed`, taken by the replay only, and `extra`, taken live only: each with `id`, `at` and its `reason` |
+| `entries` | `matched`: an entry both took, with `id`, `live_at` and `replay_at`. `missed`, taken by the replay only, and `extra`, taken live only: each with `id`, `at` and its `reason`. Each `live_at` and `at` lies in the week's period; a matched entry's `replay_at` may fall just over its edge |
 | `fill_costs` | For each kind of fill: `n`, and what was paid `live` and in the `replay` |
 | `gap` | `parts`: live less replay money, split into the seal's `gap_parts`; `unexplained`: what the parts leave |
 | `lines` | Each of the project's own lines: its `value` and the `n` it is read on. Never `match` or `unexplained`, which Themis computes |
-| `conditions` | `changes`: each change in trading conditions during the week, with `at`, `what`, `from` and `to` |
+| `conditions` | `changes`: each change in trading conditions during the week, with `at`, in the period, `what`, `from` and `to` |
 | `risk` | Each sealed risk line's number this week |
 | `range` | The live money on each sealed range day that falls in the week |
 
@@ -395,8 +395,8 @@ run, or a week, can fall short. For `forward`: a risk line passed this week or b
 its stop, a match past its stop for two weeks, a stop change this week or before, each line in its
 look zone, an unknown reason or none, an unallowed change, the money outside its range, too few
 trades, and each malformed input (a range day with no money, a sealed line or risk line missing,
-other settings, no week, weeks out of order): 22 cases, none passed. Two clean weeks past the
-count pass.
+other settings, a count of trades its entries do not hold, no week, weeks out of order): 23
+cases, none passed. Two clean weeks past the count pass.
 
 A study cannot loosen a gate through its own metrics. An `alpha` above 0.10 is refused. `entry`
 needs 30 trades and 20 draws of the dumb entry; a study may ask for more trades, never for fewer.

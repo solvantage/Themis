@@ -170,7 +170,8 @@ ANSWERS = {
     "forward stops": (forward.forward, forward.forward_case(forward.week_case("2026-48", risk={"day-loss": 0.6}),
                                                             forward.week_case("2026-49")), "stop", "fail", True),
     "forward looks closer": (forward.forward, forward.forward_case(
-        forward.week_case("2026-48"), forward.week_case("2026-49", matched=17, missed=3)), "look-closer", "refuse", True),
+        forward.week_case("2026-48"), forward.week_case("2026-49", matched=17, missed=3, trades=18)), "look-closer",
+                             "refuse", True),
     "forward defers": (forward.forward, forward.forward_case(forward.week_case("2026-48")), "defer", "refuse", False),
 }
 
@@ -247,6 +248,7 @@ BAD_FORWARD = {
     "a week that is not a table": {"weeks": [None, _WEEKS[1]]},
     "a count of trades written as a word": {"weeks": [_WEEKS[0], {**_WEEKS[1], "trades": "many"}]},
     "a count below zero": {"weeks": [_WEEKS[0], {**_WEEKS[1], "missed": -1}]},
+    "more trades than its live entries": {"weeks": [_WEEKS[0], {**_WEEKS[1], "trades": 40}]},
     "a value that is not finite": {"weeks": [_WEEKS[0], {**_WEEKS[1], "unexplained": float("nan")}]},
     "weeks out of order": {"weeks": [_WEEKS[1], _WEEKS[0]]},
     "one week twice": {"weeks": [_WEEKS[0], _WEEKS[0]]},

@@ -65,8 +65,8 @@ def test_the_inputs_hold_the_seals_lines_and_every_week_up_to_the_one_decided(tm
                                                       "min": 0}
     assert second["seal"]["risk"] == {"day-loss": {"worse": "higher", "stop": 0.52}}
     week = second["weeks"][1]
-    assert (week["matched"], week["missed"], week["extra"], week["trades"]) == (19, 1, 0, 20)
-    assert week["reasons"] == ["news pause"] and week["unexplained"] == -3.0
+    assert (week["matched"], week["missed"], week["extra"], week["trades"]) == (19, 1, 1, 20)
+    assert week["reasons"] == ["news pause", "server restart"] and week["unexplained"] == -3.0
     assert week["lines"] == {"entry-cost": {"value": 0.3, "n": 38}} and week["risk"] == {"day-loss": 0.2}
     assert json.loads(json.dumps(second)) == second  # what is stored reads back as what was built
     answer = forward.forward(second)
@@ -131,9 +131,9 @@ def test_a_week_with_no_replay_is_refused_at_decide_and_nothing_is_stored(tmp_pa
 def test_a_kinder_line_typed_into_the_stored_inputs_fails_the_rebuild_and_not_the_gate(tmp_path: Path) -> None:
     """The gate reads only what it is given, so a decision re-asked of it on typed inputs agrees: it is
     the rebuild that catches the typing."""
-    world = a_run(tmp_path, decided=None, changes={49: {"entries.matched": [], "entries.missed": [
+    world = a_run(tmp_path, decided=None, changes={49: {"entries.matched": [], "live.trades": 1, "entries.missed": [
         {"id": f"e{n}", "at": forward._at(49, 10 + n), "reason": "news pause"} for n in range(1, 21)]}},
-        inputs={49: {"seal.lines.match.pass": 0.0, "seal.lines.match.stop": 0.0}},
+        inputs={49: {"seal.lines.match.pass": 0.0, "seal.lines.match.stop": 0.0, "seal.min_trades": 1}},
         typed={49: {"decision": "pass", "verdict": "pass"}})
     assert verdict(world, "decision/issued-by-gate") is Verdict.PASS
     assert verdict(world, "forward/match") is Verdict.FAIL
@@ -316,3 +316,18 @@ def test_the_seal_and_the_weekly_record_read_as_their_schemas_say() -> None:
     missing = changed(week_record(48), {"fill_costs": forward.DROP})
     assert forward.read_week(f"{STUDY}/results/week-2026-48.json", json.dumps(missing))[1] == [
         "the record.fill_costs is required"]
+
+
+def problems_of(record: dict, name: str = "week-2026-48.json") -> list[str]:
+    return forward.read_week(f"{STUDY}/results/{name}", json.dumps(record))[1]
+
+
+def test_a_record_with_an_empty_period_a_name_in_other_digits_or_a_number_past_a_float_is_refused() -> None:
+    honest = week_record(48)
+    assert problems_of(honest) == []
+    empty = changed(honest, {"period.to": honest["period"]["from"]})
+    assert problems_of(empty) == ["the record's period does not end after it starts"]
+    assert problems_of(honest, "week-2026-٤٨.json") == [  # 48 in Arabic-Indic digits: not a week's name
+        "a weekly record is named by its ISO week, week-YYYY-WW.json, such as week-2026-48.json"]
+    for where in ("live.net", "risk.day-loss"):
+        assert problems_of(changed(honest, {where: 10 ** 400})) == [f"the record.{where} must be a finite number"]

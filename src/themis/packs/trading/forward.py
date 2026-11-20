@@ -50,6 +50,7 @@ import datetime as dt
 import json
 import math
 import re
+import sys
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -273,7 +274,8 @@ def read_seal(path: str, plan: dict[str, Any]) -> tuple[Seal | None, list[str]]:
 
 # -- the weekly record --------------------------------------------------------------------------
 
-WEEK_FILE = re.compile(r"^week-(\d{4})-(\d{2})\.json$")
+WEEK_FILE = re.compile(r"^week-([0-9]{4})-([0-9]{2})\.json$")  # ASCII digits only: one name for one week
+LONGEST = dt.timedelta(days=8)  # a week's period, at most: a broker's clock and a change of clocks fit in it
 RECORDS = "results/week-*.json"  # inside the study
 TIME = "2026-11-23T00:00:00+00:00"  # every time in a record is written so: with its UTC offset
 PERIOD = {"from": Required(str), "to": Required(str)}
@@ -322,8 +324,11 @@ def _shown(value: dt.datetime) -> str:
 
 
 def _unfinite(value: Any, where: str) -> list[str]:
-    """Each number that is not finite, by where it is: JSON can carry NaN, and no line reads it."""
+    """Each number that is not finite, by where it is: JSON can carry NaN, and a whole number too large
+    for a float, and no line reads either."""
     if isinstance(value, float) and not math.isfinite(value):
+        return [f"{where} must be a finite number"]
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) > sys.float_info.max:
         return [f"{where} must be a finite number"]
     if isinstance(value, dict):
         return [problem for key, item in value.items() for problem in _unfinite(item, f"{where}.{key}")]
@@ -435,6 +440,11 @@ def read_week(path: str, text: str | None) -> tuple[Week | None, list[str]]:
                  for where in ("fill_costs", "lines") for key, item in record[where].items() if item["n"] < 0]
     if live["trades"] and not live["first_trade_at"].strip():
         problems.append("the record's live.first_trade_at is empty, and the live week holds trades")
+    entries = record["entries"]
+    taken = len(entries["matched"]) + len(entries["extra"])
+    if live["trades"] != taken:
+        problems.append(f"the record's live.trades is {live['trades']}, and its entries hold {taken} live entries: "
+                        "each live trade is a matched entry or an extra one")
     problems += [f"the record's lines holds {own}, which Themis computes from the record itself; leave it out"
                  for own in OWN if own in record["lines"]]
     if problems:
@@ -442,8 +452,34 @@ def read_week(path: str, text: str | None) -> tuple[Week | None, list[str]]:
     week = Week(name, path, record)
     for where, held in (("period", record["period"]), ("replay.period", (week.replay or {}).get("period"))):
         if held is not None and not moment(held["from"]) < moment(held["to"]):
-            problems.append(f"the record's {where} ends before it starts")
+            problems.append(f"the record's {where} does not end after it starts")
+    problems = problems or _placed(week, (year, number))
     return (None, problems) if problems else (week, [])
+
+
+def _placed(week: Week, key: tuple[int, int]) -> list[str]:
+    """What is wrong with where the record sits in time. Its period lies in the ISO week its file names,
+    read by its middle in UTC, so a short first week, a broker's clock hours off UTC and a change of
+    clocks all fit, and it runs for 8 days at most. Each live entry, missed entry and change lies in
+    the period; a matched entry's replay time may fall just over its edge."""
+    begun, ended = week.period
+    shown = f"{_shown(begun)} to {_shown(ended)}"
+    if ended - begun > LONGEST:
+        return [f"the record's period, {shown}, runs for {(ended - begun) / dt.timedelta(days=1):g} days, and a "
+                f"week's runs for {LONGEST.days} at most"]
+    middle = (begun + (ended - begun) / 2).astimezone(dt.timezone.utc)
+    held = middle.isocalendar()[:2]
+    if held != key:
+        return [f"the record's period, {shown}, does not lie in ISO week {_name(key)}: its middle falls in week "
+                f"{_name(held)}"]
+    entries, inside = week.record["entries"], []
+    inside += [(f"entries.matched[{index}].live_at", entry["live_at"]) for index, entry in enumerate(entries["matched"])]
+    for kind in ("missed", "extra"):
+        inside += [(f"entries.{kind}[{index}].at", entry["at"]) for index, entry in enumerate(entries[kind])]
+    inside += [(f"conditions.changes[{index}].at", change["at"])
+               for index, change in enumerate(week.record["conditions"]["changes"])]
+    return [f"the record's {where}, {value}, lies outside its period, {shown}" for where, value in inside
+            if not begun <= moment(value) < ended]
 
 
 @dataclass
@@ -501,7 +537,7 @@ def read_run(study: str, files: list[str], read: Callable[[str], str | None]) ->
 def _subject(subject: str) -> tuple[str, str]:
     """The study and the week a decision names: `<study>/week-YYYY-WW`."""
     study, _, last = str(subject).strip("/").rpartition("/")
-    named = re.fullmatch(r"week-(\d{4})-(\d{2})", last)
+    named = re.fullmatch(r"week-([0-9]{4})-([0-9]{2})", last)
     if not study or not named:
         raise ValueError(f"the gate {GATE} decides one week of a forward run, named <study>/week-YYYY-WW, not {subject}")
     return study, f"{named[1]}-{named[2]}"
@@ -615,7 +651,7 @@ def _malformed(inputs: Any) -> str | None:
     for name, line in lines.items():
         if line["running"] < 1 or line["min"] < 0 or ("stop" in line and _past(line["pass"], line["stop"], line["worse"])):
             return f"the line {name} must run over 1 week or more, on a sample of 0 or more, with its stop past its pass"
-    keys = [_key(week["week"]) if re.fullmatch(r"\d{4}-\d{2}", week["week"]) else None for week in weeks]
+    keys = [_key(week["week"]) if re.fullmatch(r"[0-9]{4}-[0-9]{2}", week["week"]) else None for week in weeks]
     if None in keys or keys != sorted(set(keys)):  # type: ignore[type-var]
         return "the weeks must each be named YYYY-WW, once each, oldest first"
     for week in weeks:
@@ -623,6 +659,9 @@ def _malformed(inputs: Any) -> str | None:
         if min(week["trades"], week["matched"], week["missed"], week["extra"],
                *(held["n"] for held in week["lines"].values())) < 0:
             return f"{said} holds a count below 0"
+        if week["trades"] != week["matched"] + week["extra"]:
+            return (f"{said} counts {week['trades']} trades, and holds {week['matched'] + week['extra']} live entries: "
+                    "each live trade is a matched entry or an extra one")
         if week["settings"] != seal["settings"]:
             return f"{said} traded other settings than the seal's: a settings change ends the run"
         missing = [name for name in lines if name not in OWN and name not in week["lines"]]
@@ -743,7 +782,7 @@ CASE_SEAL: dict[str, Any] = {
     "reasons": ["news pause"], "changes_allowed": ["spread"], "changes_stop": ["leverage"],
 }
 CASE_WEEK: dict[str, Any] = {
-    "settings": "3f9a0c1d", "trades": 25, "matched": 24, "missed": 1, "extra": 0, "reasons": ["news pause"],
+    "settings": "3f9a0c1d", "trades": 25, "matched": 24, "missed": 1, "extra": 1, "reasons": ["news pause"] * 2,
     "lines": {"entry-cost": {"value": 0.3, "n": 48}}, "unexplained": -5.0, "changes": [], "risk": {"day-loss": 0.2},
     "range": {}, "range_due": [],
 }
@@ -772,8 +811,9 @@ def short_cases() -> list[dict[str, Any]]:
         {"risk": {"day-loss": 0.6}},  # a risk line passed this week
         {"lines": {"entry-cost": {"value": 0.9, "n": 48}}},  # a line past its stop
         {"lines": {"entry-cost": {"value": 0.6, "n": 48}}},  # a line in its look zone
-        {"matched": 17, "missed": 3},  # match at 0.85, in its look zone
-        {"matched": 15, "missed": 5},  # match past its stop, one week of the two it needs
+        {"matched": 17, "missed": 3, "trades": 18},  # match at 0.85, in its look zone
+        {"matched": 15, "missed": 5, "trades": 16},  # match past its stop, one week of the two it needs
+        {"trades": 40},  # more trades than the live entries it holds: malformed
         {"unexplained": 60.0},  # a remainder in its look zone
         {"unexplained": -300.0},  # a remainder past its stop
         {"reasons": ["a reason nobody sealed"]}, {"reasons": [""]},  # an unknown reason, and none
@@ -783,7 +823,8 @@ def short_cases() -> list[dict[str, Any]]:
     ]
     cases = [forward_case(week_case(one), week_case(two, **changes)) for changes in second]
     return cases + [
-        forward_case(week_case(one, matched=15, missed=5), week_case(two, matched=15, missed=5)),  # two weeks past
+        forward_case(week_case(one, matched=15, missed=5, trades=16),  # two weeks past the stop
+                     week_case(two, matched=15, missed=5, trades=16)),
         forward_case(week_case(one, risk={"day-loss": 0.6}), week_case(two)),  # a risk line passed before: it stays
         forward_case(week_case(one, changes=change("leverage")), week_case(two)),  # a stop change before
         forward_case(week_case(one)),  # too few trades so far
@@ -1247,9 +1288,18 @@ def seal_text(**changes: Any) -> str:
     return "---\n" + "".join(f"{key}: {value}\n" for key, value in fields.items() if value is not None) + "---\n\nThe plan.\n"
 
 
+def matched(number: int, count: int, step: float = 1.0, year: int = 2026, begin: float = 10) -> list[dict[str, Any]]:
+    """`count` matched entries in ISO week `year`-`number`, `step` hours apart, the first `begin` + `step`
+    hours after Monday 00:00 UTC."""
+    monday = dt.datetime.combine(dt.date.fromisocalendar(year, number, 1), dt.time(), dt.timezone.utc)
+    times = [(monday + dt.timedelta(hours=begin + n * step)).isoformat() for n in range(1, count + 1)]
+    return [{"id": f"e{n}", "live_at": at, "replay_at": at} for n, at in enumerate(times, start=1)]
+
+
 def week_record(number: int, index: int = 1, year: int = 2026) -> dict[str, Any]:
-    """An honest week: ISO week `year`-`number`, the run's `index`th. 20 trades; 19 of the replay's 20
-    entries matched live and one missed for a known reason; the gap split exactly into its parts."""
+    """An honest week: ISO week `year`-`number`, the run's `index`th. 20 live trades: 19 of the replay's
+    20 entries matched, one missed and one extra, each for a known reason; the gap split exactly into
+    its parts."""
     monday = dt.datetime.combine(dt.date.fromisocalendar(year, number, 1), dt.time(), dt.timezone.utc)
 
     def at(hours: float) -> str:
@@ -1263,8 +1313,9 @@ def week_record(number: int, index: int = 1, year: int = 2026) -> dict[str, Any]
                  "first_trade_at": at(11)},
         "replay": {"run": f"replay-{number}", "settings": SETTINGS, "period": dict(period), "start": dict(state),
                    "trades": 20, "net": 150.0},
-        "entries": {"matched": [{"id": f"e{n}", "live_at": at(10 + n), "replay_at": at(10 + n)} for n in range(1, 20)],
-                    "missed": [{"id": "e20", "at": at(40), "reason": "news pause"}], "extra": []},
+        "entries": {"matched": matched(number, 19, year=year),
+                    "missed": [{"id": "e20", "at": at(40), "reason": "news pause"}],
+                    "extra": [{"id": "x1", "at": at(60), "reason": "server restart"}]},
         "fill_costs": {"entry": {"n": 19, "live": 9.5, "replay": 5.0}},
         "gap": {"parts": {"spread": -12.0, "commission": -15.0, "swap": 0.0}, "unexplained": -3.0},
         "lines": {"entry-cost": {"value": 0.3, "n": 19 * index}},
@@ -1415,6 +1466,11 @@ def _at(number: int, hours: float) -> str:
     return (monday + dt.timedelta(hours=hours)).isoformat()
 
 
+def _periods(begun: str, ended: str) -> dict[str, str]:
+    """A week's period, and its replay's, set to these two moments."""
+    return {"period.from": begun, "period.to": ended, "replay.period.from": begun, "replay.period.to": ended}
+
+
 EVERY = None  # every week decided by the gate
 RISKY = {48: {"risk.day-loss": 0.6}}  # week 48 falls past its risk line
 STOPPED = {"decision": "stop", "verdict": "fail"}
@@ -1480,6 +1536,24 @@ _prove("forward/same-dates-control", [
      {"rules": _rule("forward/same-dates-control", 'fields = ["cost_model"]')}),
     ("a period with no UTC offset", "refuse", "is not a time with its UTC offset",
      {"changes": {48: {"period.from": "2026-11-23T00:00:00"}}}),
+    ("weeks run on a broker's clock two hours ahead of UTC", "pass", None, {"changes": {
+        48: _periods("2026-11-22T22:00:00+00:00", "2026-11-29T22:00:00+00:00"),
+        49: _periods("2026-11-29T22:00:00+00:00", "2026-12-06T22:00:00+00:00")}}),
+    ("a short first week, begun on a Wednesday", "pass", None, {"changes": {48: {
+        **_periods("2026-11-25T00:00:00+00:00", "2026-11-30T00:00:00+00:00"), "entries.matched": matched(48, 19, begin=50),
+        "entries.missed.0.at": _at(48, 100), "live.first_trade_at": _at(48, 51)}}}),
+    ("a week across a change of clocks, 7 days and an hour long", "pass", None, {"weeks": (43,), "changes": {
+        43: _periods("2026-10-18T21:00:00+00:00", "2026-10-25T22:00:00+00:00")}}),
+    ("a week whose period runs for months", "refuse", "runs for 70 days, and a week's runs for 8 at most",
+     {"changes": {48: _periods("2026-11-23T00:00:00+00:00", "2027-02-01T00:00:00+00:00")}}),
+    ("week 48 holding the dates of another year", "refuse",
+     "does not lie in ISO week 2026-48: its middle falls in week 2025-48",
+     {"changes": {48: _periods("2025-11-24T00:00:00+00:00", "2025-12-01T00:00:00+00:00")}}),
+    ("a cumulative log: week 49 holding week 48's entries too", "refuse",
+     "the record's entries.matched[0].live_at, 2026-11-23T11:00:00+00:00, lies outside its period",
+     {"changes": {49: {"entries.matched": matched(48, 19) + matched(49, 19), "live.trades": 39}}}),
+    ("a change dated in the week before", "refuse", "the record's conditions.changes[0].at", {"changes": {
+        49: {"conditions.changes": [{"at": _at(48, 30), "what": "spread", "from": 1.2, "to": 1.6}]}}}),
 ])
 
 _prove("forward/match", [
@@ -1544,7 +1618,9 @@ _prove("forward/no-retune", [
      {"files": {_week_path(50): '{"week": "2026-50"\n'}}),
 ])
 
-FEW = {"seal": {"min_trades": 220}, "changes": {48: {"live.trades": 40}, 49: {"live.trades": 190}}}
+FEW = {"seal": {"min_trades": 220},  # 40 live trades in week 48, 190 in week 49: each matched or extra
+       "changes": {48: {"live.trades": 40, "entries.matched": matched(48, 39), "entries.missed.0.id": "m1"},
+                   49: {"live.trades": 190, "entries.matched": matched(49, 189, 0.5), "entries.missed.0.id": "m1"}}}
 _prove("forward/enough-trades", [
     ("a defer at 40 trades of 220, and a pass at 230", "pass", None, {**FEW, "decided": EVERY}),
     ("the owner's pass ahead of the count, with a grant for that week", "pass", None,
@@ -1557,6 +1633,9 @@ _prove("forward/enough-trades", [
      "the seal asks for, with no forward grant", {**FEW, "decided": EVERY, "owned": {48: "pass"}, "granted": (49,)}),
     ("a seal whose count cannot be read", "refuse", "the seal cannot be read as a forward seal",
      {"seal": {"min_trades": "many"}}),
+    ("a count of live trades its entries do not hold", "refuse",
+     "the record's live.trades is 200, and its entries hold 20 live entries",
+     {**FEW, "changes": {48: {"live.trades": 200}}}),
 ])
 
 _prove("forward/risk-line", [
