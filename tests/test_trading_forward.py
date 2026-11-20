@@ -230,6 +230,27 @@ def test_a_forward_seal_that_breaks_after_its_weeks_were_recorded_is_refused_by_
     assert engine.run_rule(RULES["forward/match"], manifests.load(world.root), force=True).status == "not configured"
 
 
+@pytest.mark.parametrize(("how", "expected"), [("--ff-only", Verdict.PASS), ("--no-ff", Verdict.FAIL)])
+def test_a_seal_fast_forwarded_onto_the_main_line_keeps_the_time_it_was_made(tmp_path: Path, how: str,
+                                                                             expected: Verdict) -> None:
+    """The limit the trading page states: a seal committed on a branch at 08:00, three hours before the
+    first live trade, and merged two days later. Fast-forwarded, the main line holds the branch's own
+    commit and its time; merged with a merge commit, the merge's time is read, and the seal is late."""
+    world = World(tmp_path / "repo")
+    world.root.mkdir()
+    world.manifest(forward.MANIFEST)
+    world.commit("the project")
+    world.branch("seal")
+    world.on("2026-11-23", 8)
+    world.write(f"{STUDY}/PRE-REG.md", seal_text())
+    world.commit("the seal")
+    world.checkout("main")
+    world.on("2026-11-25", 9)
+    world.git("merge", "-q", how, "-m", "merge the seal", "seal")
+    world.write(forward._week_path(48), json.dumps(week_record(48)))
+    assert verdict(world, "forward/sealed-before-start") is expected
+
+
 @pytest.mark.parametrize("rule_id", ["scorecard/believable", "scorecard/explainer"])
 def test_the_scorecard_rules_bind_a_forward_run_unless_kinds_says_otherwise(tmp_path: Path, rule_id: str) -> None:
     world = a_run(tmp_path)

@@ -295,6 +295,59 @@ def calibration_problems(text: str, name: str) -> list[str]:
     return found
 
 
+def forward_cell_problems(text: str) -> list[str]:
+    """The forward gate's "A pass needs" cell names every step of its order: the risk lines, a line's
+    `running` weeks, its pass, the reasons, `changes_allowed`, the ranges and `min_trades`."""
+    rows = [line for line in section(text, SECTIONS["trading"]["gates"]).splitlines() if line.startswith("| `forward` |")]
+    cell = rows[0].strip("|").split("|")[-1] if rows else ""
+    ticked = set(TICKED.findall(cell))
+    return ([f"the forward gate's pass cell does not tick {key}" for key in ("running", "changes_allowed", "min_trades")
+             if key not in ticked]
+            + [f"the forward gate's pass cell does not name the {word}" for word in ("risk", "pass", "reason", "range")
+               if word not in cell])
+
+
+def alike_problems(text: str) -> list[str]:
+    """A start field the page says is written "as 2 or 2.0 alike" is a number field of the record, not a
+    whole number, which the record refuses as 2.0."""
+    found = re.search(r"start` \(each field: (.*?) written as 2 or 2\.0 alike", text, re.DOTALL)
+    named = TICKED.findall(found.group(1)) if found else []
+    return ([] if named else ["the page does not say which start fields are written as 2 or 2.0 alike"]) + [
+        f"start.{name} is not a number field of the record" for name in named if forward.START.get(name) is not None
+        and getattr(forward.START[name], "spec", None) is not float]
+
+
+def upgrade_problems(text: str, standard: str = "themis-trading/1", gate: str = "forward") -> list[str]:
+    """The page says what 0.3.0 added to the standard: the forward gate's rules, counted in words."""
+    start = text.find("**Upgrading to 0.3.0.**")
+    paragraph = text[start:text.find("\n\n", start)] if start >= 0 else ""
+    added = sum(rule_id.startswith(f"{gate}/") for rule_id in pack.load("trading").standards[standard].levels)
+    said = f"the {ONES[added]} {gate} rules"
+    return [] if f"`{standard}`" in paragraph and said in paragraph else [
+        f"no upgrade note says 0.3.0 added {said} to {standard}"]
+
+
+def test_the_forward_gates_pass_cell_names_every_step_of_its_order() -> None:
+    text = page(DOCUMENTS["trading"])
+    assert forward_cell_problems(text) == []
+    assert forward_cell_problems(text.replace("every change in `changes_allowed`, ", "", 1)) == [
+        "the forward gate's pass cell does not tick changes_allowed"]
+
+
+def test_only_number_fields_of_the_start_are_said_to_be_written_alike() -> None:
+    text = page(DOCUMENTS["trading"])
+    assert alike_problems(text) == []
+    planted = text.replace("`balance` and `peak` written", "`balance`, `open_positions` and `peak` written", 1)
+    assert alike_problems(planted) == ["start.open_positions is not a number field of the record"]
+
+
+def test_the_upgrade_note_names_what_the_standard_gained() -> None:
+    text = page(DOCUMENTS["trading"])
+    assert upgrade_problems(text) == []
+    assert upgrade_problems(text.replace("**Upgrading to 0.3.0.**", "**Upgrading.**")) == [
+        "no upgrade note says 0.3.0 added the eight forward rules to themis-trading/1"]
+
+
 def test_each_kind_row_ticks_every_field_its_seal_must_state() -> None:
     assert seal_problems(page(DOCUMENTS["trading"])) == []
 

@@ -39,8 +39,9 @@ each rule says "not configured". The seal:
 `match` and `unexplained` are lines every forward seal draws, and Themis computes them from the
 records; the other lines are the project's own. A line has a `pass` and, optionally, a `stop`, on
 the side its `worse` names; between the two is "look closer". `running` is how many weeks in a row
-a line must be past its stop before it stops the run (1 when unset), and `min` the least sample it
-is read on (0 when unset). A risk line has only a `stop`. A range is the live money on a day since
+a line must be past its stop before it stops that week (1 when unset), and `min` the least sample
+it is read on (0 when unset); a line on no sample is never judged. A risk line has only a `stop`,
+and once passed it stops every week after. A range is the live money on a day since
 the start, `{low, high}`.
 """
 

@@ -310,7 +310,8 @@ not passed over as "not configured".
   move it later. It needs no `since` and no release date. With `margin_hours`, the seal must arrive
   that many hours before.
 - **`forward/same-dates-control`.** Each week's replay runs over the week's own `period`, from the
-  same `start` (each field, a whole number written as 2 or 2.0 alike, a time as one moment), on the
+  same `start` (each field: `balance` and `peak` written as 2 or 2.0 alike, `open_positions` a whole
+  number, `at` as one moment), on the
   same `settings`, and on each field in `fields`. The weeks follow one another: no ISO week is
   skipped, and each starts at the moment the one before it ends.
 - **`forward/match`.** Each missed and extra entry gives a reason; no entry is listed twice in a
@@ -344,7 +345,7 @@ verdict, whether the evidence was enough, a reason in words, and every number it
 | `signal` | Do higher values of the signal come before higher values of what follows? | The same two lists with the signal rotated against the forward values, which keeps each list's own stickiness | A rank correlation above zero and above that noise floor, on samples that do not overlap, with the same sign in all but one block. A drift both lists share is taken out first |
 | `entry` | Is an entry or exit better than a dumb entry? | Draws of a dumb entry on the same days, in the same window, on the same side | The trades pay on average after costs; each side pays when two sides are claimed; the mean sits in the top `alpha` of the dumb draws |
 | `tune` | Did a tuned setting earn its confirmation? | Its own stages, in order | The search stayed inside its sealed budget; in-sample, out-of-sample and the walk back over untouched periods all passed; then the sealed window, once |
-| `forward` | Is a live run holding up against its replay, week by week? | Its own sealed lines, read on a replay of the same dates | No risk line passed and no line past its stop, this week's lines inside their pass, every missed or extra entry for a known reason, and the sealed number of trades |
+| `forward` | Is a live run holding up against its replay, week by week? | Its own sealed lines, read on a replay of the same dates | No risk line passed in any week; this week no line past its stop for its `running` weeks, every line inside its pass, every missed or extra entry for a known reason, every change in `changes_allowed`, and the money inside the range of each range day reached; and the sealed `min_trades` |
 
 The decisions are `promote`, `kill` and `defer`. The tuning gate says `full-pass`, `kill` and
 `not-confirmed`. The forward gate says `pass`, `stop`, `look-closer` and `defer`. Every gate
@@ -509,6 +510,11 @@ is at least 0.8, `min_trades` on `forward/enough-trades` is at least 30, and
 run sets the forward rules at `enforce` all the same: with no study sealed as `forward`, each says
 "not configured", and decides nothing.
 
+**Upgrading to 0.3.0.** 0.3.0 added the eight forward rules to `themis-trading/1` at `enforce`, and
+the floor `min_trades` 30 on `forward/enough-trades`, under the same standard id. A project that
+declares the standard lists eight deviations until it sets them at `enforce`, and a `strict` one
+fails `config/standard-floor` until then; with no forward run, each is then "not configured".
+
 ## 8. What a project's own code uses
 
 The pack ships no adapter for any one engine or tester. It ships the pieces an adapter is made
@@ -608,7 +614,10 @@ Every rule has cases that pass, fail and refuse, and `themis prove` runs them. A
   written by the project's own script. A trade it does not list, or a change in trading conditions
   it does not hold, is invisible to every forward rule and to the gate.
 - **A commit's time is the committer's clock.** `forward/sealed-before-start` reads the time the
-  main line's commit states. A clock set wrong moves the seal's arrival with it.
+  main line's commit states. A clock set wrong moves the seal's arrival with it, and so does a
+  commit fast-forwarded or rebased onto the main line, which keeps the time it was made, not the
+  time it arrived. Merge a forward seal with a merge commit (or a host's merge or squash, which
+  stamps the time of the merge).
 - **A paired figure is the project's arithmetic.** Themis computes `match` and `unexplained` from
   the record. A line of the project's own, such as the extra cost of a fill, is read as the record
   gives it. Themis reads a project line's `n` as written: it cannot know whether `n` counts
