@@ -1081,7 +1081,7 @@ def _rebuilt(ctx: Context, record: Any, subject: str) -> None:
       learned="Live entries were paired with the replay's by hand, and the ones that did not fit were left out of "
               "the count.")
 def match(ctx: Context) -> None:
-    runs, decided = _runs(ctx), units.decisions(ctx)
+    runs, decided, grants = _runs(ctx), units.decisions(ctx), None
     floor = ctx.param("floor") or 0
     for run in runs:
         ctx.inspect()
@@ -1089,7 +1089,6 @@ def match(ctx: Context) -> None:
         if sealed_pass < floor:
             ctx.breach(f"the seal sets the pass of match at {sealed_pass:g}, under this project's floor of {floor:g}",
                        where=run.seal.path, fix=f"seal match with a pass of {floor:g} or more")
-        so_far = 0
         for week in run.weeks:
             ctx.inspect()
             said, entries, subject = f"week {week.name}", week.record["entries"], week.subject(run.study)
@@ -1106,22 +1105,49 @@ def match(ctx: Context) -> None:
                         ctx.breach(f"the entry {entry['id']} is listed twice in {said}: under {seen[entry['id']]} and "
                                    f"under {kind}", where=week.path, fix="list each entry once: matched, missed or extra")
                     seen.setdefault(entry["id"], kind)
-            so_far += len(entries["matched"])
             for name in (name for name in run.seal.lines if name not in OWN):
-                held = week.record["lines"].get(name)
-                if held is None:
+                if name not in week.record["lines"]:  # its n is read as written: Themis cannot know what it counts
                     ctx.breach(f"{said} has no value for the sealed line {name}", where=week.path,
                                fix=f"write {name} into the week's lines, with the n it is read on")
-                elif held["n"] > so_far:
-                    ctx.breach(f"{said} reads the line {name} on {held['n']} entries, and only {so_far} have matched "
-                               "so far", where=week.path, fix="read a paired figure on matched entries only")
             found = decided.get(subject, [])
             if not found:
                 ctx.breach(f"{said} has no decision from the gate", where=week.path,
                            fix=f"run `themis decide {subject} --gate {GATE}`")
             for record in found:
-                if record.get("by") != "owner" and record.get("gate") == GATE:
+                if record.get("by") == "owner":
+                    grants = _owner_pass(ctx, record, subject, grants)
+                elif record.get("gate") == GATE:
                     _rebuilt(ctx, record, subject)
+        names = {week.name for week in run.weeks}
+        for subject, found in sorted(decided.items()):
+            named = re.fullmatch(rf"{re.escape(run.study)}/week-([0-9]{{4}})-([0-9]{{2}})", subject)
+            if named and f"{named[1]}-{named[2]}" not in names:
+                for record in found:
+                    ctx.inspect()
+                    ctx.breach(f"the decision of week {named[1]}-{named[2]} names a record that is not there: "
+                               f"{run.study}/results/week-{named[1]}-{named[2]}.json", where=record.path,
+                               fix="restore the week's record from git: a week once decided keeps its record")
+
+
+def _owner_pass(ctx: Context, record: Any, subject: str, grants: list[Any] | None) -> list[Any] | None:
+    """Breach when the owner stored a pass the gate would not give, with no unspent forward grant for
+    that week. Returns the grants, read once."""
+    if record.get("verdict") != "pass":
+        return grants
+    try:
+        answer = forward(build(ctx.root, ctx.manifest, subject))
+        said = None if answer["verdict"] == "pass" else f"where the gate says {answer['decision']}"
+    except ValueError as error:
+        said = f"where the gate cannot decide ({error})"
+    if said is None:
+        return grants
+    granted, grants = _granted(ctx, grants, subject)
+    if not granted:
+        ctx.breach(f"the owner passed {subject.rsplit('/', 1)[-1].replace('-', ' ', 1)}, {said}, with no unspent "
+                   f"{ACTION} grant for that week", where=record.path,
+                   fix=f"the owner runs `themis grant {ACTION} {subject} --reason ...` before a pass the gate does "
+                       "not give")
+    return grants
 
 
 # -- forward/gap-explained ----------------------------------------------------------------------
@@ -1269,14 +1295,15 @@ def risk_line(ctx: Context) -> None:
             if passed is None:
                 continue
             for record in decided.get(subject, []):
-                if record.get("decision") == "stop":
-                    continue
+                if record.get("decision") == "stop" and record.get("verdict") == "fail":
+                    continue  # a stop is the word and the verdict both
                 if record.get("by") == "owner":
                     granted, grants = _granted(ctx, grants, subject)
                     if granted:
                         continue  # the owner overruled the stop, with a grant for this week
                 ctx.breach(f"the risk line {passed[1]} was passed in week {passed[0]} ({passed[2]:g}, past its stop of "
-                           f"{passed[3]:g}), and week {week.name} is stored as {record.get('decision')}",
+                           f"{passed[3]:g}), and week {week.name} is stored as {record.get('decision')} with the "
+                           f"verdict {record.get('verdict')}",
                            where=record.path, fix=f"a passed risk line stops the run: issue the decision again from the "
                                                   f"gate; only the owner overrules it, with `themis grant {ACTION} "
                                                   f"{subject}`")
@@ -1394,9 +1421,11 @@ def decide(world: World, number: int, typed: dict[str, Any] | None = None, input
     world.write(f"decisions/{name}.json", json.dumps(changed(record, typed or {})))
 
 
-def owner(world: World, number: int, decision: str) -> None:
-    """The owner's own call on a week, as `themis decide --by owner` stores it."""
-    verdict = {"pass": "pass", "stop": "fail"}.get(decision, "refuse")
+def owner(world: World, number: int, decision: str | tuple[str, str]) -> None:
+    """The owner's own call on a week, as `themis decide --by owner` stores it: a decision word, with
+    the verdict it usually goes with, or a (word, verdict) pair."""
+    decision, verdict = decision if isinstance(decision, tuple) else (
+        decision, {"pass": "pass", "stop": "fail"}.get(decision, "refuse"))
     subject = _subject_of(number)
     world.write(f"decisions/{work.file_name(subject)}.json", json.dumps({
         "work": subject, "decision": decision, "verdict": verdict, "gate": GATE, "gate_version": "owner",
@@ -1591,9 +1620,21 @@ _prove("forward/match", [
      {"decided": EVERY, "changes": {48: {"entries.missed.0.reason": " "}}}),
     ("one entry in two lists", "fail", "the entry e20 is listed twice in week 2026-48: under missed and under extra",
      {"decided": EVERY, "changes": {48: {"entries.extra": [{"id": "e20", "at": _at(48, 41), "reason": "news pause"}]}}}),
-    ("a line read on more entries than have matched", "fail",
-     "reads the line entry-cost on 25 entries, and only 19 have matched so far",
-     {"decided": EVERY, "changes": {48: {"lines.entry-cost.n": 25}}}),
+    ("a project line read on 120 hours, in a week of 19 matched entries", "pass", None,
+     {"decided": EVERY, "changes": {48: {"lines.entry-cost.n": 120}}}),
+    ("a decision left behind when its week's record was removed", "fail",
+     "the decision of week 2026-48 names a record that is not there", {"weeks": (49, 50), "decided": EVERY, "files": {
+         "decisions/work-fwd-week-2026-48.json": json.dumps({
+             "work": _subject_of(48), "decision": "stop", "verdict": "fail", "gate": GATE, "gate_version": "1",
+             "decided_at": _decided_at(48), "enough_evidence": True, "reason": "the risk line day-loss was passed",
+             "inputs": "decision-inputs/work-fwd-week-2026-48.json"})}}),
+    ("the owner's pass over a line's stop, with no grant", "fail",
+     "the owner passed week 2026-49, where the gate says stop, with no unspent forward grant for that week",
+     {"decided": EVERY, "changes": {49: {"lines.entry-cost.value": 0.9}}, "owned": {49: "pass"}}),
+    ("the owner's pass over a line's stop, with a grant for that week", "pass", None,
+     {"decided": EVERY, "changes": {49: {"lines.entry-cost.value": 0.9}}, "owned": {49: "pass"}, "granted": (49,)}),
+    ("the owner's pass where the gate passes too needs no grant", "pass", None,
+     {"decided": EVERY, "owned": {49: "pass"}}),
     ("a sealed line left out of a week", "fail", "week 2026-48 has no value for the sealed line entry-cost",
      {"decided": EVERY, "changes": {48: {"lines": {}}}}),
     ("a match bar under the project's floor", "fail", "sets the pass of match at 0.9, under this project's floor of 0.95",
@@ -1676,6 +1717,9 @@ _prove("forward/risk-line", [
      {"decided": EVERY, "changes": RISKY, "typed": {49: {"decision": "pass", "verdict": "pass"}}}),
     ("the owner's overrule with no grant", "fail", "and week 2026-49 is stored as pass",
      {"decided": EVERY, "changes": RISKY, "owned": {49: "pass"}}),
+    ("the owner's stop word with a pass verdict, and no grant", "fail",
+     "and week 2026-49 is stored as stop with the verdict pass",
+     {"decided": EVERY, "changes": RISKY, "owned": {49: ("stop", "pass")}}),
     ("a risk figure missing from a week", "fail", "week 2026-49 has no figure for the sealed risk line day-loss",
      {"changes": {49: {"risk": {}}}}),
     ("a risk line the project requires, left out of the seal", "fail",

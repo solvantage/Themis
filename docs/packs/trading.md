@@ -32,7 +32,7 @@ their trading meaning.
 | Ledger | A **trial**: a ledger record that names the study and how many variants it covers |
 | Order | The **pre-registration** is the seal; everything under `results/` is a result |
 | Decision | A **verdict**, issued by a gate function: `entry`, `signal`, `tune`, or `forward` for each week of a forward run |
-| Grant | One look at a **sealed window** of data; the owner's yes to a forward week's pass ahead of its count, or to an overrule of its stop |
+| Grant | One look at a **sealed window** of data; the owner's yes to a forward week's pass that the gate does not give: ahead of its count, or over a stop or a look-closer |
 | Receipt | The action receipt each look leaves; the calibration receipt of each gate |
 | Report | The **scorecard** and its report page |
 
@@ -111,7 +111,7 @@ A study is one folder. The pack reads these files in it, and these records besid
 | Comparison | `comparisons/**/*.json` | `what` is compared, and `runs`: two or more runs side by side, each with `run` (its id) and the fingerprint fields the project names. Tracked, since a rule cannot see an ignored file |
 | Weekly record | `<study>/results/week-YYYY-WW.json` | One ISO week of a forward run, written by the project's own script (below) |
 | Week decision | `decisions/<study>-week-YYYY-WW.json` | That week's verdict from the gate `forward`: its `work` is `<study>/week-YYYY-WW`, and its `inputs` is the file under `decision-inputs/` the gate read, built from the seal and the records |
-| Forward grant | `grants/*.toml` | The action `forward` on the target `<study>/week-YYYY-WW`: the owner's yes to that week's pass ahead of the count, or to an overrule of its stop |
+| Forward grant | `grants/*.toml` | The action `forward` on the target `<study>/week-YYYY-WW`: the owner's yes, unspent, to that week's pass where the gate does not pass it: ahead of the count, or over a stop or a look-closer |
 
 **The weekly record.** One file for each ISO week of a forward run, written by the project's own
 script through `themis run`, never by hand. Every key is required, and a list or a table may be
@@ -311,10 +311,12 @@ refused by every forward rule, and nothing else of that run is judged.
   same `settings`, and on each field in `fields`. The weeks follow one another: no ISO week is
   skipped, and each starts at the moment the one before it ends.
 - **`forward/match`.** Each missed and extra entry gives a reason; no entry is listed twice in a
-  week; each of the project's own lines is in every week, with an `n` no larger than the entries
-  matched so far; each week has a decision; and the inputs a gate's decision names equal a rebuild
-  from the seal and the records, as `results/inputs-rebuilt` does for the marketing gate. The
-  owner's own call is not rebuilt. `floor` is the lowest `pass` a seal may set for `match`.
+  week; each of the project's own lines is in every week; each week has a decision, and no
+  decision names a week whose record is gone; and the inputs a gate's decision names equal a
+  rebuild from the seal and the records, as `results/inputs-rebuilt` does for the marketing gate.
+  The owner's own call is not rebuilt, but a pass the owner stored where the gate, on the rebuilt
+  inputs, would not pass needs an unspent `forward` grant for that week. `floor` is the lowest
+  `pass` a seal may set for `match`.
 - **`forward/gap-explained`.** The parts are exactly the seal's `gap_parts`, and the parts and
   `unexplained` add up to live less replay `net`, within `tolerance`.
 - **`forward/conditions-stable`.** A gate's decision holds the week's `conditions.changes` as its
@@ -326,7 +328,7 @@ refused by every forward rule, and nothing else of that run is judged.
   grant for that week.
 - **`forward/risk-line`.** Every week holds a number for each sealed risk line, and the seal draws
   each risk id in `required`. Once a risk line is passed, that week and every later one is stored as
-  `stop`, unless the owner overruled it with a `forward` grant for that week.
+  `stop` with the verdict FAIL, unless the owner overruled it with a `forward` grant for that week.
 
 ## 6. The gate functions
 
@@ -605,8 +607,9 @@ Every rule has cases that pass, fail and refuse, and `themis prove` runs them. A
 - **A commit's time is the committer's clock.** `forward/sealed-before-start` reads the time the
   main line's commit states. A clock set wrong moves the seal's arrival with it.
 - **A paired figure is the project's arithmetic.** Themis computes `match` and `unexplained` from
-  the record. A line of the project's own, such as a cost a fill, is read as the record gives it,
-  and held only to its `n`.
+  the record. A line of the project's own, such as the extra cost of a fill, is read as the record
+  gives it. Themis reads a project line's `n` as written: it cannot know whether `n` counts
+  entries, hours, days or orders, so it holds `n` only to being a whole number, 0 or more.
 - **The `signal` gate cannot tell a real link from a shape both lists share.** It takes out a
   steady drift, and no more. In a check at this release, two lists that shared a V shape and
   nothing else passed 36 times in 100. A cycle both lists share can pass too. The seal's own

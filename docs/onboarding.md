@@ -448,9 +448,12 @@ changes_stop: [leverage]
 A bad week is the gate's verdict, not a breach. `look-closer` is a REFUSE: you read the week, and it
 is never read as a pass. A risk line's `stop` stays: every later week of the run is `stop` too. A
 line past its stop, or a change the seal stops on, stops that week only, for you to pause and look;
-the next week is judged on its own. New settings are a new run, sealed in a folder of its own. Only you pass a week ahead of its count, or
-overrule a stop, with `themis grant forward <study>/week-YYYY-WW --reason "..."` and then `themis
-decide <study>/week-YYYY-WW --gate forward --by owner`, with your decision, verdict and reason.
+the next week is judged on its own. New settings are a new run, sealed in a folder of its own.
+
+Only you pass a week the gate does not pass, ahead of its count or over a stop or a look-closer:
+first `themis grant forward <study>/week-YYYY-WW --reason "..."`, then `themis decide
+<study>/week-YYYY-WW --gate forward --by owner`, with your decision, verdict and reason. A pass
+stored with no grant for that week fails `forward/match`.
 
 | Corner cut | What the agent does | What Themis says |
 | --- | --- | --- |
