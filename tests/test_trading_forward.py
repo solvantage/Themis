@@ -2,7 +2,9 @@
 
 The eight rules are proven by their own worlds (themis/packs/trading/forward.py), and the gate by
 the shared gate tests. This file holds what lies between them: the builder that makes the gate's
-inputs from the seal and the records, and `themis decide` and `themis calibrate` on a forward run.
+inputs from the seal and the records; `themis decide` and `themis calibrate` on a forward run; a
+project with no forward run; and the dry run, one past week laid against itself, then a missed
+entry, a cost jump and a settings change, each through `themis run` and the project's own script.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import pytest
 
 from themis import engine, gates, pack
 from themis import manifest as manifests
-from themis.cli import EXIT_PASS, EXIT_REFUSE, main
+from themis.cli import EXIT_FAIL, EXIT_PASS, EXIT_REFUSE, main
 from themis.packs.trading import forward
 from themis.packs.trading.forward import STUDY, changed, seal_text, week_record
 from themis.proofs import World
@@ -189,6 +191,111 @@ def test_the_scorecard_rules_bind_a_forward_run_unless_kinds_says_otherwise(tmp_
     assert verdict(world, rule_id) is Verdict.FAIL  # a forward run with records answers like any study
     world.manifest(forward.MANIFEST + forward._rule(rule_id, 'kinds = ["strategy", "signal"]'))
     assert verdict(world, rule_id) is Verdict.REFUSE  # not bound: nothing is left to inspect
+
+
+# -- the dry run: one past week laid against itself, then three faults --------------------------
+
+DRY = {"min_trades": 30, "line-entry-cost": '{worse = "higher", pass = 0.05, stop = 0.2}',
+       "gap_parts": "[costs, missed, extra]"}
+WEEK = "2026-48"
+
+
+def dry_run(tmp_path: Path) -> World:
+    """The project, its weekly script, and a forward seal merged on its own before the week."""
+    from forward_journal import JOURNAL
+
+    world = World(tmp_path / "dry")
+    world.root.mkdir(parents=True)
+    world.manifest(forward.MANIFEST)
+    world.write(".gitignore", ".themis/\n__pycache__/\n")
+    world.write("journal.py", JOURNAL)
+    world.commit("start")
+    world.pull_request("seal", {f"{STUDY}/PRE-REG.md": seal_text(**DRY)})
+    return world
+
+
+def dry_week(world: World, live: list, replay: list, **given: object) -> tuple[int, str]:
+    """The week's logs committed, its record written by the script through `themis run`, then decided."""
+    import sys
+
+    from forward_journal import write_logs
+
+    logs = write_logs(world.root, WEEK, live, replay, **given)  # type: ignore[arg-type]
+    world.commit("the week's logs")
+    inputs = [part for path in logs for part in ("--input", path)]
+    code, said = themis(world, "run", STUDY, *inputs, "--", sys.executable, "journal.py", STUDY, WEEK, *logs)
+    assert code == EXIT_PASS, said
+    world.commit("the week's record")
+    return themis(world, "decide", f"{STUDY}/week-{WEEK}", "--gate", "forward")
+
+
+@pytest.mark.parametrize(("count", "code", "said"), [
+    (25, EXIT_REFUSE, "REFUSE: defer. 25 trades so far, and the seal asks for 30 before any pass"),
+    (35, EXIT_PASS, "PASS: pass. every line is inside its pass and every entry's reason is known, on 35 trades"),
+])
+def test_the_dry_run_one_past_week_against_itself_passes_or_defers(tmp_path: Path, count: int, code: int,
+                                                                   said: str) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past = trades(WEEK, count)
+    got, text = dry_week(world, past, past)
+    assert got == code and said in text
+    record = json.loads((world.root / STUDY / "results" / f"week-{WEEK}.json").read_text())
+    assert record["gap"] == {"parts": {"costs": 0.0, "missed": 0.0, "extra": 0.0}, "unexplained": 0.0}
+    assert (len(record["entries"]["matched"]), record["entries"]["missed"], record["entries"]["extra"]) == (count, [], [])
+    for rule_id in FORWARD_RULES:
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id
+
+
+def test_the_dry_run_a_missed_entry_with_no_reason_is_looked_at_and_fails_the_count(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past = trades(WEEK, 25)
+    code, said = dry_week(world, past[1:], past)
+    assert code == EXIT_REFUSE and "look-closer. an entry was missed or extra for a reason the seal does not " \
+                                   "know: none given" in said
+    assert verdict(world, "forward/match") is Verdict.FAIL  # an entry missed with no reason
+    for rule_id in ("forward/gap-explained", "forward/same-dates-control", "decision/issued-by-gate"):
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id  # the missed entry's money explains the gap
+
+
+def test_the_dry_run_a_missed_entry_for_a_sealed_reason_is_counted_and_holds(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past = trades(WEEK, 35)
+    code, said = dry_week(world, past[1:], past, reasons={past[0]["id"]: "news pause"})
+    assert code == EXIT_PASS and "on 34 trades so far" in said  # 34 of 35 entries matched: 0.97, inside 0.9
+    for rule_id in FORWARD_RULES:
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id
+
+
+def test_the_dry_run_a_cost_jump_stops_the_run_and_the_gap_still_adds_up(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past, dearer = trades(WEEK, 25), trades(WEEK, 25, cost=0.5)
+    code, said = dry_week(world, dearer, past)
+    assert code == EXIT_FAIL and "stop. entry-cost was past its stop of 0.2 for 1 week(s) in a row, to week 2026-48" in said
+    record = json.loads((world.root / STUDY / "results" / f"week-{WEEK}.json").read_text())
+    assert record["lines"]["entry-cost"] == {"value": 0.4, "n": 25} and record["gap"]["parts"]["costs"] == -10.0
+    for rule_id in ("forward/gap-explained", "forward/match", "forward/risk-line", "decision/issued-by-gate"):
+        assert verdict(world, rule_id) is Verdict.PASS, rule_id
+
+
+def test_the_dry_run_a_settings_change_is_refused_and_fails_no_retune(tmp_path: Path) -> None:
+    from forward_journal import trades
+
+    world = dry_run(tmp_path)
+    past = trades(WEEK, 25)
+    code, said = dry_week(world, past, past, settings="77c0aa11")
+    assert code == EXIT_REFUSE and ("week 2026-48 traded the settings 77c0aa11, and the seal's are 3f9a0c1d: a "
+                                    "settings change ends the run") in said
+    assert not (world.root / "decisions").exists()
+    assert verdict(world, "forward/no-retune") is Verdict.FAIL
+    assert verdict(world, "forward/same-dates-control") is Verdict.FAIL  # the replay ran on the sealed settings
 
 
 def test_the_seal_and_the_weekly_record_read_as_their_schemas_say() -> None:
