@@ -86,7 +86,9 @@ are the project's own. A line's `worse` says which way it goes bad, `pass` is it
 when it has one, lies past the bar; between the two is "look closer". `running` is how many weeks
 in a row a line must be past its stop before it stops the run, 1 when unset, and `min` the least
 sample it is read on, 0 when unset. A risk line has only `worse` and `stop`. A range is the live
-money on a day since the start, from `low` to `high`.
+money on a day since the start, from `low` to `high`. The frontmatter splits a list at its commas,
+so a reason holds no comma; and it reads a value of digits alone as a number, so a fingerprint
+made only of digits is quoted: `settings: "20261120"`.
 
 Whatever its kind, a study that holds anything under `results/` also needs its provenance file,
 five answers in its README about how far it can be believed, and a short explainer page or a
