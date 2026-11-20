@@ -8,7 +8,7 @@ Themis checks a repository the way a careful reviewer would, every time, from th
 git history. An AI agent working in the repository cannot quote a number nothing recorded,
 decide a result by typing it, spend past a budget, publish without your yes, or look at sealed
 data unasked. This page sets it up for trading research or for marketing content, and walks
-cases through the whole workflow: a guarded command in any project, four trading cases and three
+cases through the whole workflow: a guarded command in any project, five trading cases and three
 content cases.
 
 ## Key features
@@ -183,7 +183,7 @@ what each one is missing.
 | Check | A second script reproduces the numbers | Each checklist row's judge runs `themis attest <file> <row> --judge <judge> --by <who>` |
 | Approve | `themis grant holdout <study>/<window>`, by you, to look at sealed data | `themis grant publish <item>`, by you; `post.toml` names the grant |
 | Run what the grant opens | `themis act holdout <study>/<window> -- <command>`, when the look is made by a program outside Python | `themis act <action> <target> -- <command>` for any guarded command of your own |
-| Decide | `themis decide <study> --gate entry` | `themis decide <series> --gate results --rival <other series>` |
+| Decide | `themis decide <study> --gate entry`; each week of a forward run, `themis decide <study>/week-YYYY-WW --gate forward` | `themis decide <series> --gate results --rival <other series>` |
 | Report | `themis report <study>` | `themis report <item>` |
 | Hand off | `themis checkpoint` | The same |
 
@@ -235,7 +235,7 @@ The hook does not stop `themis act`: the agent runs it, and your click stays on 
 The action receipt in `receipts/action/` names the grant, the command, the hash of the token the
 command was given, and how it exited.
 
-## Trading: four cases, start to finish
+## Trading: five cases, start to finish
 
 ### T1. An honest study
 
@@ -376,6 +376,86 @@ are each caught by one of them:
 `<study>` is the folder `themis new` made, such as `tuning/2026-11-19_breakout`. Sibling studies
 that tune the same strategy on the same unseen dates declare the same window id, and their looks
 count together.
+
+### T5. A forward run, week by week
+
+The tuned settings now trade live. Each week the project's own script reads the week's live log
+and a replay of the same dates, from the week's own start, on the same settings, pairs their
+entries, and writes the week's record, `results/week-YYYY-WW.json` (its keys are in
+[extending.md](extending.md#adapters)). The gate `forward` reads every week up to the one it
+decides. The manifest turns the forward rules on:
+
+```toml
+[trading]
+work = "forward/*"
+
+[rules]
+"prereg/declared" = "enforce"
+"decision/issued-by-gate" = "enforce"
+"decision/calibrated" = "enforce"
+"forward/sealed-before-start" = "enforce"
+"forward/same-dates-control" = "enforce"
+"forward/match" = "enforce"
+"forward/gap-explained" = "enforce"
+"forward/conditions-stable" = "enforce"
+"forward/no-retune" = "enforce"
+"forward/enough-trades" = "enforce"
+"forward/risk-line" = "enforce"
+
+[rules."scorecard/believable"]
+kinds = ["strategy", "signal"]      # a forward run ships no README of its own
+
+[rules."scorecard/explainer"]
+kinds = ["strategy", "signal"]
+```
+
+The seal names the settings' fingerprint, the trades before any pass, who stops the run, its
+lines, its risk line, the parts of the money gap and the known reasons for a missed entry. It is
+merged on its own before the first live trade:
+
+```markdown
+---
+kind: forward
+gate: forward
+settings: 3f9a0c1d
+min_trades: 60
+stop_rule: the owner stops the run; a restart is a new run, sealed anew
+lines: [match, unexplained, entry-cost]
+line-match: {worse = "lower", pass = 0.90, stop = 0.80, running = 2}
+line-unexplained: {worse = "higher", pass = 20, stop = 100}
+line-entry-cost: {worse = "higher", pass = 0.43, stop = 0.86}
+risk: [day-loss]
+line-day-loss: {worse = "higher", stop = 0.52}
+ranges: []
+gap_parts: [costs, missed, extra]
+reasons: [news pause]
+changes_allowed: [spread]
+changes_stop: [leverage]
+---
+```
+
+| Step | What happens | What Themis says |
+| --- | --- | --- |
+| Log | `themis new breakout-live --question "..."` | `Seal its plan before anything runs.` |
+| Seal | `PRE-REG.md`, as above, merged in a pull request of its own before day 1 | `prereg/declared` passes |
+| Calibrate | `themis calibrate forward`, and the receipt it writes committed | `says yes to noise 0.0% of the time` |
+| Week 1 | The week's two logs committed; `themis run <study> --input <live log> --input <replay> -- python journal.py <study> 2026-48 <live log> <replay>`; then `themis decide <study>/week-2026-48 --gate forward` | `defer. 20 trades so far, and the seal asks for 60 before any pass` (REFUSE) |
+| Week 2 | The same; 3 of the replay's 20 entries are missed live, each for a sealed reason | `look-closer. match is 0.85 this week, worse than its pass of 0.9` (REFUSE) |
+| Week 3 | 25 entries, all matched: 62 trades so far | `pass. every line is inside its pass and every entry's reason is known, on 62 trades so far, where the seal asks for 60` |
+| Week 4 | The day's loss reaches 0.61 | `stop. the risk line day-loss was passed in week 2026-51: 0.61, past its stop of 0.52` (FAIL) |
+| Hand off | `themis check` | PASS: the seal came first, and each week's replay, matches, gap, changes, settings, count and risk line hold |
+
+A bad week is the gate's verdict, not a breach. `look-closer` is a REFUSE: you read the week, and it
+is never read as a pass. A `stop` stays: every later week of the run is `stop` too, and new
+settings are a new run, sealed in a folder of its own. Only you pass a week ahead of its count, or
+overrule a stop, with `themis grant forward <study>/week-YYYY-WW --reason "..."` and then `themis
+decide <study>/week-YYYY-WW --gate forward --by owner`, with your decision, verdict and reason.
+
+| Corner cut | What the agent does | What Themis says |
+| --- | --- | --- |
+| A retune | Trades week 2 on new settings | `week 2026-49 traded the settings 77c0aa11, and the seal's are 3f9a0c1d: a settings change ends the run` (REFUSE: nothing is stored), and `forward/no-retune` fails |
+| No replay | Runs the week's script on the live log alone | `week 2026-48 has no replay` (REFUSE), and `forward/same-dates-control` fails |
+| A verdict by hand | Types "pass" over the gate's "defer" | `the stored decision is 'pass' with the verdict 'pass', but the gate forward returns 'defer' with the verdict 'refuse'`, and `week 2026-48 is stored as a pass at 20 of the 60 trades the seal asks for` |
 
 ## Marketing content: three cases, start to finish
 

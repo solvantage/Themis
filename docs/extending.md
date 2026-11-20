@@ -338,6 +338,31 @@ it trusts, it refuses what it cannot read, and it never guesses a missing value.
 The manifest has an `[adapters]` table, which a pack may read for its adapters' settings. No
 shipped pack reads it yet.
 
+**A forward run's weekly record.** The trading pack's forward kind reads one record each ISO week,
+`<study>/results/week-YYYY-WW.json`, and the project's own script writes it: `themis run <study>
+--input <live log> --input <replay> -- <the script>`, where the script reads the live log and the
+replay of the same dates and writes the record. Themis ships no such script; it checks what the
+script writes. Every key is required (a list or a table may be empty), and every time carries its
+UTC offset: a tool that keeps the server's own time converts it first. Key by key:
+
+| Key | What the script writes |
+| --- | --- |
+| `week` | The ISO week, `YYYY-WW`, as the file is named |
+| `period` | `from` and `to`: the moment the week starts, and the moment the next one starts |
+| `live` | The live week: `run` (its id), `settings` (the fingerprint the seal names), `start` (`at`, `balance`, `open_positions`, `peak`), `trades`, `net`, `first_trade_at` (empty only with no trade) |
+| `replay` | The same settings replayed over the same `period`, from the same `start`: `run`, `settings`, `period`, `start`, `trades`, `net`; `null` when no replay was made |
+| `entries` | The two runs' entries, paired: `matched` (`id`, `live_at`, `replay_at`), `missed` by the live run and `extra` to it, each with `id`, `at` and its `reason` |
+| `fill_costs` | For each kind of fill: `n`, and the cost `live` and in the `replay` |
+| `gap` | `parts`: live less replay `net`, split into the seal's `gap_parts`; `unexplained`: what they leave |
+| `lines` | Each of the project's own sealed lines: its `value`, and the `n` it is read on. Not `match` or `unexplained`: Themis computes those |
+| `conditions` | `changes`: each change in trading conditions during the week, with `at`, `what`, `from` and `to` |
+| `risk` | Each sealed risk line's number for the week |
+| `range` | The live money on each sealed range day that falls in the week |
+
+Further fingerprint fields may sit beside the others in `live` and `replay`, for
+`forward/same-dates-control`'s `fields`. A record that leaves out a trade or a change hides it from
+every rule: the script is the project's, and so is its honesty.
+
 ## 5. What an extension may not do
 
 | Not allowed | Because |
