@@ -446,8 +446,9 @@ changes_stop: [leverage]
 | Hand off | `themis check` | PASS: the seal came first, and each week's replay, matches, gap, changes, settings, count and risk line hold |
 
 A bad week is the gate's verdict, not a breach. `look-closer` is a REFUSE: you read the week, and it
-is never read as a pass. A `stop` stays: every later week of the run is `stop` too, and new
-settings are a new run, sealed in a folder of its own. Only you pass a week ahead of its count, or
+is never read as a pass. A risk line's `stop` stays: every later week of the run is `stop` too. A
+line past its stop, or a change the seal stops on, stops that week only, for you to pause and look;
+the next week is judged on its own. New settings are a new run, sealed in a folder of its own. Only you pass a week ahead of its count, or
 overrule a stop, with `themis grant forward <study>/week-YYYY-WW --reason "..."` and then `themis
 decide <study>/week-YYYY-WW --gate forward --by owner`, with your decision, verdict and reason.
 

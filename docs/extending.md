@@ -355,8 +355,8 @@ UTC offset: a tool that keeps the server's own time converts it first. Key by ke
 | `replay` | The same settings replayed over the same `period`, from the same `start`: `run`, `settings`, `period`, `start`, `trades`, `net`; `null` when no replay was made |
 | `entries` | The two runs' entries of this week only, paired: `matched` (`id`, `live_at`, `replay_at`), `missed` by the live run and `extra` to it, each with `id`, `at` and its `reason`; each `live_at` and `at` in the period. With no replay, every live trade is extra |
 | `fill_costs` | For each kind of fill: `n`, and the cost `live` and in the `replay` |
-| `gap` | `parts`: live less replay `net`, split into the seal's `gap_parts`; `unexplained`: what they leave |
-| `lines` | Each of the project's own sealed lines: its `value`, and the `n` it is read on. Not `match` or `unexplained`: Themis computes those |
+| `gap` | `parts`: live less replay `net`, split into the seal's `gap_parts`; `unexplained`: what they leave. Themis works the remainder out again from the money and the sealed parts, and reads its own |
+| `lines` | Each of the project's own sealed lines: its `value`, and the `n` it is read on; `value` is `null` when the line has no sample this week (`n` 0). Not `match` or `unexplained`: Themis computes those |
 | `conditions` | `changes`: each change in trading conditions during the week, with `at` (in the period), `what`, `from` and `to` |
 | `risk` | Each sealed risk line's number for the week |
 | `range` | The live money on each sealed range day that falls in the week |

@@ -285,6 +285,51 @@ def test_no_gate_passes_on_nothing(gate, metrics) -> None:
     assert gate(metrics)["verdict"] == "refuse"
 
 
+# --- forward -----------------------------------------------------------------------------------
+
+LEVERAGE = [{"at": "2026-11-24T10:00:00+00:00", "what": "leverage", "from": 1.0, "to": 2.0}]
+
+
+@pytest.mark.parametrize(("first", "then"), [
+    ({"risk": {"day-loss": 0.6}}, "stop"),  # a risk line's stop stays
+    ({"changes": LEVERAGE}, "pass"),  # a change the seal stops on stops its own week
+    ({"lines": {"entry-cost": {"value": 0.9, "n": 48}}}, "pass"),  # so does a line past its stop
+])
+def test_only_a_risk_lines_stop_stays_for_the_weeks_after_it(first: dict, then: str) -> None:
+    week = forward.week_case
+    assert forward.forward(forward.forward_case(week("2026-48", **first)))["decision"] == "stop"
+    assert forward.forward(forward.forward_case(week("2026-48", **first), week("2026-49")))["decision"] == then
+
+
+def test_a_line_stops_only_a_week_that_ends_its_run_past_the_stop() -> None:
+    """match runs over 2 weeks: two weeks past its stop stop the second, and a clean third passes; a week
+    it cannot be read on is passed over, neither ending the run nor adding to it."""
+    week, past = forward.week_case, {"matched": 15, "missed": 5, "trades": 16}
+    two = [week("2026-48", **past), week("2026-49", **past)]
+    assert forward.forward(forward.forward_case(*two))["decision"] == "stop"
+    assert forward.forward(forward.forward_case(*two, week("2026-50")))["decision"] == "pass"
+    unread = week("2026-49", matched=0, missed=0, trades=1)
+    assert forward.forward(forward.forward_case(week("2026-48", **past), unread,
+                                                week("2026-50", **past)))["decision"] == "stop"
+
+
+@pytest.mark.parametrize("held", [{"value": None, "n": 0}, {"value": 0.0, "n": 0}])
+def test_a_line_read_on_no_sample_is_never_judged(held: dict) -> None:
+    """A project line with no sample this week: null, or the 0.0 a project already writes. With no
+    `min`, a lower-is-worse line on 0.0 would be read as past its stop."""
+    lines = {**CLEAN_FORWARD["seal"]["lines"], "fill-share": {"worse": "lower", "pass": 0.9, "stop": 0.8,
+                                                             "running": 1, "min": 0}}
+    weeks = [{**week, "lines": {**week["lines"], "fill-share": held}} for week in CLEAN_FORWARD["weeks"]]
+    answer = forward.forward({**CLEAN_FORWARD, "seal": {**CLEAN_FORWARD["seal"], "lines": lines}, "weeks": weeks})
+    assert answer["decision"] == "pass" and answer["numbers"]["lines"]["fill-share"]["zone"] is None
+    weeks[1]["lines"]["fill-share"] = {"value": 0.0, "n": 5}  # read on a sample, the same 0.0 stops it
+    assert forward.forward({**CLEAN_FORWARD, "seal": {**CLEAN_FORWARD["seal"], "lines": lines},
+                            "weeks": weeks})["decision"] == "stop"
+    weeks[1]["lines"]["fill-share"] = {"value": None, "n": 5}  # no value on a sample: malformed
+    assert forward.forward({**CLEAN_FORWARD, "seal": {**CLEAN_FORWARD["seal"], "lines": lines},
+                            "weeks": weeks})["decision"] == "defer"
+
+
 # --- entry -------------------------------------------------------------------------------------
 
 

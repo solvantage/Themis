@@ -83,6 +83,34 @@ def test_a_range_day_is_read_in_the_week_that_holds_it(tmp_path: Path) -> None:
     assert forward.forward(built(world, "2026-49"))["decision"] == "look-closer"  # 12000 is above the range
 
 
+@pytest.mark.parametrize("given", [
+    {"changes": {49: {"live.net": -480.0}}},  # the remainder typed as -3, where the money leaves -603
+    {"changes": {49: {"live.net": -480.0, "gap.parts.other": -600.0}}},  # a part the seal does not name
+    {"changes": {49: {"live.net": -480.0}}, "rules": forward._rule("forward/gap-explained", "tolerance = 1000")},
+])
+def test_the_remainder_is_worked_out_from_the_money_and_the_sealed_parts(tmp_path: Path, given: dict) -> None:
+    """Themis computes `unexplained`: live less replay net, less the sealed parts. A small remainder typed
+    over a large one, or a part the seal does not name, takes nothing off it, whatever the tolerance."""
+    world = a_run(tmp_path, **given)
+    inputs = built(world, "2026-49")
+    assert inputs["weeks"][1]["unexplained"] == -480.0 - 150.0 + 27.0
+    answer = forward.forward(inputs)
+    assert answer["decision"] == "stop" and "unexplained was past its stop of 100" in answer["reason"]
+    if "rules" not in given:
+        assert verdict(world, "forward/gap-explained") is Verdict.FAIL  # the record's own figure disagrees
+
+
+def test_a_line_value_may_be_null_only_on_no_sample(tmp_path: Path) -> None:
+    world = a_run(tmp_path, changes={49: {"lines.entry-cost": {"value": None, "n": 0}}})
+    assert built(world, "2026-49")["weeks"][1]["lines"] == {"entry-cost": {"value": None, "n": 0}}
+    assert forward.read_week(f"{STUDY}/results/week-2026-49.json", json.dumps(changed(
+        week_record(49), {"lines.entry-cost": {"value": None, "n": 3}})))[1] == [
+        "the record.lines.entry-cost.value is null, and its n is 3: only a line read on no sample has no value"]
+    assert forward.read_week(f"{STUDY}/results/week-2026-49.json", json.dumps(changed(
+        week_record(49), {"lines.entry-cost.value": "high"})))[1] == [
+        "the record.lines.entry-cost.value must be a number, or null when its n is 0"]
+
+
 @pytest.mark.parametrize(("subject", "changes", "said"), [
     ("work/fwd", {}, "named <study>/week-YYYY-WW"),
     ("work/other/week-2026-48", {}, "work/other is not a study sealed as kind forward"),

@@ -287,6 +287,7 @@ REPLAY = {"run": Required(str), "settings": Required(str), "period": Required(PE
 MATCHED = {"id": Required(str), "live_at": Required(str), "replay_at": Required(str)}
 UNPAIRED = {"id": Required(str), "at": Required(str), "reason": Required(str)}
 CHANGE = {"at": Required(str), "what": Required(str), "from": Required(ANY), "to": Required(ANY)}
+LINE_VALUE = {"value": Required(ANY), "n": Required(int)}  # value: a number, or null with n 0 (`_line_values`)
 #: The weekly record, `<study>/results/week-YYYY-WW.json`. Every key is required, and a list or a table
 #: may be empty. `live` and `replay` may hold further fingerprint fields, for forward/same-dates-control.
 WEEK = {
@@ -298,7 +299,7 @@ WEEK = {
                          "extra": Required([UNPAIRED])}),
     "fill_costs": Required({"*": {"n": Required(int), "live": Required(float), "replay": Required(float)}}),
     "gap": Required({"parts": Required({"*": float}), "unexplained": Required(float)}),
-    "lines": Required({"*": {"value": Required(float), "n": Required(int)}}),
+    "lines": Required({"*": LINE_VALUE}),  # a value, or null when n is 0: a line read on no sample
     "conditions": Required({"changes": Required([CHANGE])}),
     "risk": Required({"*": float}),
     "range": Required({"*": float}),
@@ -335,6 +336,20 @@ def _unfinite(value: Any, where: str) -> list[str]:
     if isinstance(value, list):
         return [problem for index, item in enumerate(value) for problem in _unfinite(item, f"{where}[{index}]")]
     return []
+
+
+def _line_values(lines: dict[str, Any], where: str) -> list[str]:
+    """What is wrong with the values of a week's own lines: each a number, or null when its n is 0. A
+    line read on no sample has no value to judge."""
+    found = []
+    for name, held in lines.items():
+        value = held["value"]
+        if value is None and held["n"] != 0:
+            found.append(f"{where}.{name}.value is null, and its n is {held['n']}: only a line read on no sample "
+                         "has no value")
+        elif value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            found.append(f"{where}.{name}.value must be a number, or null when its n is 0")
+    return found
 
 
 def _get(record: Any, dotted: str) -> Any:
@@ -426,7 +441,7 @@ def read_week(path: str, text: str | None) -> tuple[Week | None, list[str]]:
     problems = schema.problems(record, WEEK, "the record")
     if not problems and record["replay"] not in (None, {}):
         problems += schema.problems(record["replay"], REPLAY, "the record's replay")
-    problems += _unfinite(record, "the record")
+    problems += _unfinite(record, "the record") + ([] if problems else _line_values(record["lines"], "the record.lines"))
     if problems:
         return None, problems
     name, live = _name((year, number)), record["live"]
@@ -557,7 +572,10 @@ def _inputs_of(seal: Seal, start: dt.datetime, week: Week) -> dict[str, Any]:
         "matched": len(entries["matched"]), "missed": len(entries["missed"]), "extra": len(entries["extra"]),
         "reasons": [entry["reason"] for kind in ("missed", "extra") for entry in entries[kind]],
         "lines": {name: record["lines"][name] for name in seal.lines if name not in OWN and name in record["lines"]},
-        "unexplained": record["gap"]["unexplained"],
+        # Themis's own remainder: live less replay money, less the sealed parts. A part the seal does not
+        # name takes up nothing, and the record's own `unexplained` is held to it by forward/gap-explained.
+        "unexplained": live["net"] - week.replay["net"] - math.fsum(  # type: ignore[index]
+            record["gap"]["parts"].get(part, 0.0) for part in seal.gap_parts),
         "changes": record["conditions"]["changes"],
         "risk": {name: record["risk"][name] for name in seal.risk if name in record["risk"]},
         "range": {day: record["range"][day] for day in due if day in record["range"]},
@@ -612,7 +630,7 @@ INPUT_LINE = {"worse": Required(Choice("higher", "lower")), "pass": Required(flo
 INPUT_WEEK = {
     "week": Required(str), "settings": Required(str), "trades": Required(int), "matched": Required(int),
     "missed": Required(int), "extra": Required(int), "reasons": Required([str]),
-    "lines": Required({"*": {"value": Required(float), "n": Required(int)}}), "unexplained": Required(float),
+    "lines": Required({"*": LINE_VALUE}), "unexplained": Required(float),
     "changes": Required([CHANGE]), "risk": Required({"*": float}), "range": Required({"*": float}),
     "range_due": Required([str]),
 }
@@ -637,6 +655,9 @@ def _malformed(inputs: Any) -> str | None:
     if not isinstance(inputs, dict):
         return "the inputs are not a table"
     wrong = schema.problems(inputs, INPUTS, "the inputs") + _unfinite(inputs, "the inputs")
+    if not wrong:
+        wrong = [found for index, week in enumerate(inputs["weeks"])
+                 for found in _line_values(week["lines"], f"the inputs.weeks[{index}].lines")]
     if wrong:
         return "the inputs cannot be read: " + "; ".join(wrong[:3])
     seal, weeks = inputs["seal"], inputs["weeks"]
@@ -676,20 +697,21 @@ def _malformed(inputs: Any) -> str | None:
 
 def _value(name: str, week: dict[str, Any]) -> tuple[float | None, int]:
     """A line's value in one week, and the sample it is read on. Themis computes match, the share of the
-    replay's entries that also appear live, and unexplained, the size of the gap's remainder."""
+    replay's entries that also appear live, read on matched and missed entries; and unexplained, the
+    size of the gap's remainder, read on every entry of the week, matched, missed or extra."""
     if name == "match":
         seen = week["matched"] + week["missed"]
         return (week["matched"] / seen if seen else None), seen
     if name == "unexplained":
-        return abs(week["unexplained"]), week["trades"]
+        return abs(week["unexplained"]), week["matched"] + week["missed"] + week["extra"]
     held = week["lines"][name]
     return held["value"], held["n"]
 
 
 def _zone(line: dict[str, Any], value: float | None, n: int) -> str | None:
     """Where a value lies against its line: pass, look or stop. None when it cannot be judged: no
-    value, or a sample under the line's `min`."""
-    if value is None or n < line["min"]:
+    value, a sample of none, or a sample under the line's `min`."""
+    if value is None or n == 0 or n < line["min"]:
         return None
     if not _past(value, line["pass"], line["worse"]):
         return "pass"
@@ -705,8 +727,8 @@ def forward(inputs: dict[str, Any]) -> Answer:
 
     1. Malformed inputs: `defer`.
     2. A risk line passed in any week so far: `stop`. It stays: every later week is `stop` too.
-    3. A line past its stop for `running` weeks in a row, each read on at least its `min`, or a change
-       the seal stops on, in any week so far: `stop`.
+    3. This week, a line past its stop and so for `running` weeks in a row, or a change the seal stops
+       on: `stop`, for this week. A later week is judged on its own; its run of weeks looks back.
     4. This week, a line worse than its pass, a missed or extra entry for a reason the seal does not
        know, a change the seal does not allow, or a range day reached with the money outside: `look-closer`.
     5. Fewer trades so far than `min_trades`: `defer`.
@@ -714,9 +736,9 @@ def forward(inputs: dict[str, Any]) -> Answer:
 
     `stop` is a fail on enough evidence; `look-closer` a refusal on enough evidence, which a person
     reads; `defer` a refusal on too little. A look-closer is never read as a pass. A week a line
-    cannot be judged on, because its sample is under `min`, is passed over: it neither ends a run of
-    weeks past the stop nor adds to one. `numbers.conditions_changes` is the week's list of changes, as
-    its record gives it, for forward/conditions-stable to read.
+    cannot be judged on, because its sample is none or under `min`, is passed over: it neither ends a
+    run of weeks past the stop nor adds to one. `numbers.conditions_changes` is the week's list of
+    changes, as its record gives it, for forward/conditions-stable to read.
     """
     wrong = _malformed(inputs)
     if wrong:
@@ -736,13 +758,14 @@ def forward(inputs: dict[str, Any]) -> Answer:
             if zone is None:
                 continue  # passed over: it neither ends the run of weeks nor adds to it
             run = run + 1 if zone == "stop" else 0
-            if run == line["running"]:
-                stops.append(f"{name} was past its stop of {line['stop']:g} for {run} week(s) in a row, to week "
-                             f"{week['week']}")
         value, n = _value(name, now)
-        lines[name] = {"value": value, "n": n, "zone": _zone(line, value, n), "weeks_past_stop": run}
-    stops += [f"the change of {change['what']} in week {week['week']} is one the seal stops on"
-              for week in weeks for change in week["changes"] if change["what"] in seal["changes_stop"]]
+        zone = _zone(line, value, n)
+        if zone == "stop" and run >= line["running"]:  # this week past its stop, and so for its run of weeks
+            stops.append(f"{name} was past its stop of {line['stop']:g} for {run} week(s) in a row, to week "
+                         f"{now['week']}")
+        lines[name] = {"value": value, "n": n, "zone": zone, "weeks_past_stop": run if zone == "stop" else 0}
+    stops += [f"the change of {change['what']} in week {now['week']} is one the seal stops on"
+              for change in now["changes"] if change["what"] in seal["changes_stop"]]
     look = [f"{name} is {held['value']:g} this week, worse than its pass of {seal['lines'][name]['pass']:g}"
             for name, held in lines.items() if held["zone"] in ("look", "stop")]
     unknown = sorted({reason for reason in now["reasons"] if reason not in seal["reasons"]})
@@ -826,7 +849,9 @@ def short_cases() -> list[dict[str, Any]]:
         forward_case(week_case(one, matched=15, missed=5, trades=16),  # two weeks past the stop
                      week_case(two, matched=15, missed=5, trades=16)),
         forward_case(week_case(one, risk={"day-loss": 0.6}), week_case(two)),  # a risk line passed before: it stays
-        forward_case(week_case(one, changes=change("leverage")), week_case(two)),  # a stop change before
+        forward_case(week_case(one, matched=15, missed=5, trades=16),  # past the stop two judged weeks running,
+                     week_case(two, matched=0, missed=0, trades=1),  # with a week match cannot be read on between
+                     week_case("2026-50", matched=15, missed=5, trades=16)),
         forward_case(week_case(one)),  # too few trades so far
         forward_case(),  # no week at all
         forward_case(week_case(two), week_case(one)),  # weeks out of order

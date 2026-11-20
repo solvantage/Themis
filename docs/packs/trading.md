@@ -84,8 +84,8 @@ changes_stop: [leverage]
 `match` and `unexplained` are drawn by every forward seal and computed by Themis; the other lines
 are the project's own. A line's `worse` says which way it goes bad, `pass` is its bar, and `stop`,
 when it has one, lies past the bar; between the two is "look closer". `running` is how many weeks
-in a row a line must be past its stop before it stops the run, 1 when unset, and `min` the least
-sample it is read on, 0 when unset. A risk line has only `worse` and `stop`. A range is the live
+in a row a line must be past its stop before it stops that week, 1 when unset, and `min` the least
+sample it is read on, 0 when unset; a line read on no sample is never judged. A risk line has only `worse` and `stop`. A range is the live
 money on a day since the start, from `low` to `high`. The frontmatter splits a list at its commas,
 so a reason holds no comma; and it reads a value of digits alone as a number, so a fingerprint
 made only of digits is quoted: `settings: "20261120"`.
@@ -140,8 +140,8 @@ a key left out or a value of the wrong shape, and the record is refused.
 | `replay` | The same settings replayed: `run`, `settings`, its own `period`, `start`, `trades`, `net`; or `null` in a week with no replay |
 | `entries` | `matched`: an entry both took, with `id`, `live_at` and `replay_at`. `missed`, taken by the replay only, and `extra`, taken live only: each with `id`, `at` and its `reason`. Each `live_at` and `at` lies in the week's period; a matched entry's `replay_at` may fall just over its edge |
 | `fill_costs` | For each kind of fill: `n`, and what was paid `live` and in the `replay` |
-| `gap` | `parts`: live less replay money, split into the seal's `gap_parts`; `unexplained`: what the parts leave |
-| `lines` | Each of the project's own lines: its `value` and the `n` it is read on. Never `match` or `unexplained`, which Themis computes |
+| `gap` | `parts`: live less replay money, split into the seal's `gap_parts`; `unexplained`: what the parts leave, which must agree with the remainder Themis works out |
+| `lines` | Each of the project's own lines: its `value` and the `n` it is read on. `value` is `null` only when `n` is 0, and a line read on no sample is never judged. Never `match` or `unexplained`, which Themis computes |
 | `conditions` | `changes`: each change in trading conditions during the week, with `at`, in the period, `what`, `from` and `to` |
 | `risk` | Each sealed risk line's number this week |
 | `range` | The live money on each sealed range day that falls in the week |
@@ -358,8 +358,10 @@ stored. The gate then answers in this order, and the first that holds is its ans
 
 1. Malformed inputs: `defer`.
 2. A risk line passed in any week so far: `stop`. It stays: every later week is `stop` too.
-3. A line past its `stop` for `running` weeks in a row, each read on a sample of at least its
-   `min`, or a change the seal names in `changes_stop`, in any week so far: `stop`.
+3. This week, a line past its `stop`, and so for `running` weeks in a row, each read on a sample of
+   at least its `min`; or a change this week the seal names in `changes_stop`: `stop`, for this
+   week. It asks the owner to pause and look; a later week is judged on its own, and its run of
+   weeks looks back over the earlier ones.
 4. This week, a line worse than its `pass`, a missed or extra entry for a reason the seal does not
    know, a change not in `changes_allowed`, or a range day reached with the money outside it:
    `look-closer`.
@@ -367,9 +369,12 @@ stored. The gate then answers in this order, and the first that holds is its ans
 6. Otherwise `pass`.
 
 `match` is the share of the replay's entries that also appear live, read on matched and missed
-entries; `unexplained` is the size of the gap's remainder, read on the week's trades. A week a
-line cannot be judged on, because its sample is under `min`, is passed over: it neither ends a run
-of weeks past the stop nor adds to one. Range day N falls N days after the run's first week began.
+entries. `unexplained` is the size of the gap's remainder as Themis works it out: live less replay
+`net`, less the record's sealed parts, read on all the week's entries; a part the seal does not
+name takes nothing off it, and the record's own `unexplained` is held to it by
+`forward/gap-explained`. A week a line cannot be judged on, because its sample is none or under
+`min`, is passed over: it neither ends a run of weeks past the stop nor adds to one. Range day N
+falls N days after the run's first week began.
 
 | Word | Verdict | Enough evidence |
 | --- | --- | --- |
@@ -392,8 +397,8 @@ release:
 
 The `tune` and `forward` gates read outcomes, not draws, so their cases are a list of every way a
 run, or a week, can fall short. For `forward`: a risk line passed this week or before, a line past
-its stop, a match past its stop for two weeks, a stop change this week or before, each line in its
-look zone, an unknown reason or none, an unallowed change, the money outside its range, too few
+its stop, a match past its stop for two weeks (and for two with a week between that it cannot be
+read on), a stop change this week, each line in its look zone, an unknown reason or none, an unallowed change, the money outside its range, too few
 trades, and each malformed input (a range day with no money, a sealed line or risk line missing,
 other settings, a count of trades its entries do not hold, no week, weeks out of order): 23
 cases, none passed. Two clean weeks past the count pass.
