@@ -511,29 +511,40 @@ class Run:
         return [week for week in self.weeks if week.key <= _key(name)]
 
 
-def _plan(read: Callable[[str], str | None], unit: str, files: list[str]) -> tuple[str | None, dict[str, Any] | None]:
-    """A study's seal and its frontmatter; None for either that is not there or cannot be read."""
+def _seal_of(read: Callable[[str], str | None], unit: str,
+             files: list[str]) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    """A study's seal, its frontmatter, and why the frontmatter cannot be read when it cannot."""
     seals = work.inside(unit, files, units.SEAL)
     if not seals:
-        return None, None
+        return None, None, None
     try:
-        return seals[0], records.frontmatter(read(seals[0]) or "")
-    except ValueError:
-        return seals[0], None
+        plan = records.frontmatter(read(seals[0]) or "")
+    except ValueError as error:
+        return seals[0], None, str(error)
+    return seals[0], plan, None if plan is not None else "it has no block between two --- lines"
+
+
+def is_forward(read: Callable[[str], str | None], unit: str, files: list[str]) -> bool:
+    """True for a study sealed as kind forward; and for one whose seal cannot be read while it holds
+    weekly records, so a seal that breaks after a week was recorded is refused, not passed over."""
+    path, plan, _ = _seal_of(read, unit, files)
+    if plan is not None:
+        return plan.get("kind") == KIND
+    return path is not None and bool(work.inside(unit, files, [RECORDS]))
 
 
 def sealed(manifest: Any, files: list[str], read: Callable[[str], str | None]) -> dict[str, list[str]]:
-    """Each study whose seal is of kind forward, with its files."""
+    """Each forward run (`is_forward`), with its files."""
     return {unit: inside for unit, inside in sorted(data.studies(manifest, files).items())
-            if (_plan(read, unit, inside)[1] or {}).get("kind") == KIND}
+            if is_forward(read, unit, inside)}
 
 
 def read_run(study: str, files: list[str], read: Callable[[str], str | None]) -> Run:
     """A forward run, read from its seal and its weekly records."""
     run = Run(study)
-    path, plan = _plan(read, study, files)
+    path, plan, error = _seal_of(read, study, files)
     if path is None or plan is None:
-        run.problems.append((path or study, "the forward run's seal has no frontmatter block that can be read"))
+        run.problems.append((path or study, f"the forward run's seal cannot be read: {error or 'there is none'}"))
     else:
         run.seal, wrong = read_seal(path, plan)
         run.problems += [(path, f"the seal cannot be read as a forward seal: {problem}") for problem in wrong]
@@ -875,8 +886,7 @@ def forward_planted() -> float:
 def _runs(ctx: Context) -> list[Run]:
     """Every forward run that can be read. Stops the rule when no study is sealed as forward; a run
     whose seal or records cannot be read is refused, and nothing else of it is judged."""
-    found = {unit: files for unit, files in sorted(units.studies(ctx).items())
-             if (_plan(ctx.read, unit, files)[1] or {}).get("kind") == KIND}
+    found = {unit: files for unit, files in sorted(units.studies(ctx).items()) if is_forward(ctx.read, unit, files)}
     if not found:
         ctx.not_configured("seal a study as kind forward, with kind: forward in its PRE-REG.md")
     runs = []
@@ -1644,6 +1654,9 @@ _prove("forward/match", [
                                        "lines.entry-cost.value": 0.5}}}),
     ("a decision that names no file of its numbers", "refuse", "does not name a readable file",
      {"decided": EVERY, "typed": {49: {"inputs": DROP}}}),
+    ("a seal whose frontmatter breaks after its weeks were recorded", "refuse",
+     "the forward run's seal cannot be read: frontmatter line is not `key: value`",
+     {"decided": EVERY, "files": {f"{STUDY}/PRE-REG.md": seal_text().replace("stop_rule: ", "stop_rule ")}}),
 ])
 
 _prove("forward/gap-explained", [

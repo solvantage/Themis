@@ -82,7 +82,7 @@ FIELDS = {
     "ranges": (lambda v: isinstance(v, list), "a list", "the days since the start on which the live money is read"),
     "gap_parts": (lambda v: isinstance(v, list), "a list", "the parts the gap between live and replay money is split into"),
     "reasons": (lambda v: isinstance(v, list), "a list", "the known reasons for an entry missed or extra"),
-    "commit":(lambda v: _hex(v, 7, 40), "7 to 40 hex characters", "the commit the run was made on"),
+    "commit": (lambda v: _hex(v, 7, 40), "7 to 40 hex characters", "the commit the run was made on"),
     "clean": (lambda v: v is True, "true", "a fingerprint taken on a dirty tree pins nothing"),
     "inputs": (lambda v: isinstance(v, dict) and bool(v) and all(_hex(item, 64, 64) for item in v.values()),
                "a table that gives each input's path a sha256 of 64 hex characters", "what the run read"),
@@ -464,6 +464,9 @@ _prove("prereg/declared", _sealed, [
      {**FORWARD, "line-slippage": '{worse = "higher", pass = 1}'}),
     ("a change both allowed and a stop", "fail", "the change spread is both allowed and a stop",
      {**FORWARD, "changes_stop": "[spread, leverage]"}),
+    ("a reason quoted with a comma in it", "pass", None, {**FORWARD, "reasons": '["news, pause", server restart]'}),
+    ("a list item that opens a quote it does not close", "refuse", "a list item opens a quote it does not close",
+     {**FORWARD, "changes_stop": '["leverage, margin]'}),
 ])
 
 

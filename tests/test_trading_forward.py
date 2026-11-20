@@ -213,6 +213,23 @@ def test_a_standard_project_with_no_forward_run_finds_each_forward_rule_not_conf
         ("forward/match", "level is warn; the standard requires enforce")]
 
 
+def test_a_forward_seal_that_breaks_after_its_weeks_were_recorded_is_refused_by_every_forward_rule(
+        tmp_path: Path) -> None:
+    """With no readable seal the run would drop out, and every forward rule would say "not configured"
+    while its records and decisions stand. It is refused instead, as a record that cannot be read is."""
+    world = a_run(tmp_path, decided=None, files={f"{STUDY}/PRE-REG.md": seal_text().replace("stop_rule: ",
+                                                                                           "stop_rule ")})
+    for rule_id in FORWARD_RULES:
+        result = engine.run_rule(RULES[rule_id], manifests.load(world.root), force=True)
+        assert (result.status, result.verdict) == ("ran", Verdict.REFUSE), rule_id
+        assert "the forward run's seal cannot be read" in result.findings[0].message
+    with pytest.raises(ValueError, match="the forward run's seal cannot be read"):
+        built(world, "2026-48")
+    world.remove(f"{STUDY}/results/week-2026-48.json")  # a study with a broken seal and no weeks is no run
+    world.remove(f"{STUDY}/results/week-2026-49.json")
+    assert engine.run_rule(RULES["forward/match"], manifests.load(world.root), force=True).status == "not configured"
+
+
 @pytest.mark.parametrize("rule_id", ["scorecard/believable", "scorecard/explainer"])
 def test_the_scorecard_rules_bind_a_forward_run_unless_kinds_says_otherwise(tmp_path: Path, rule_id: str) -> None:
     world = a_run(tmp_path)

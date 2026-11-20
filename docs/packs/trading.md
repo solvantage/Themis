@@ -86,9 +86,10 @@ are the project's own. A line's `worse` says which way it goes bad, `pass` is it
 when it has one, lies past the bar; between the two is "look closer". `running` is how many weeks
 in a row a line must be past its stop before it stops that week, 1 when unset, and `min` the least
 sample it is read on, 0 when unset; a line read on no sample is never judged. A risk line has only `worse` and `stop`. A range is the live
-money on a day since the start, from `low` to `high`. The frontmatter splits a list at its commas,
-so a reason holds no comma; and it reads a value of digits alone as a number, so a fingerprint
-made only of digits is quoted: `settings: "20261120"`.
+money on a day since the start, from `low` to `high`. The frontmatter splits every list at its
+commas, so a list item that holds a comma is quoted, `reasons: ["news, pause", server restart]`,
+and a quote an item opens and does not close makes the seal unreadable. It reads a value of digits
+alone as a number, so a fingerprint made only of digits is quoted: `settings: "20261120"`.
 
 Whatever its kind, a study that holds anything under `results/` also needs its provenance file,
 five answers in its README about how far it can be believed, and a short explainer page or a
@@ -295,7 +296,9 @@ What the rules read, in more detail:
 The eight forward rules read the studies whose seal is of kind `forward`; with none, each says
 "not configured". A bad week is the gate's verdict, not a breach: a rule fails only when the seal,
 a record or a stored verdict is missing or dishonest. A seal or a record that cannot be read is
-refused by every forward rule, and nothing else of that run is judged.
+refused by every forward rule, and nothing else of that run is judged; a study whose seal cannot
+be read while it holds weekly records counts as a forward run, so a seal that breaks is refused,
+not passed over as "not configured".
 
 - **`forward/sealed-before-start`.** The seal is dated by the last main-line commit that changed
   it, or changed an amendment record that names it (`Git.last_changes`), read to the second
