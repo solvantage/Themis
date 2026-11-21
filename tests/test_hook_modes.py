@@ -495,7 +495,7 @@ DANGERS = [
     ("find . -name '*.tmp' | xargs rm", "deletes"), ("git rm notes.md", "deletes"), ("git clean -fdx", "deletes"),
     ("find . -name '*.pyc' -delete", "deletes"), ("find <scratch>/clone -follow -delete", "deletes"),
     ("git worktree remove /srv/wt", "deletes"),
-    ("git branch -D feature", "deletes a branch"), ("git branch --del topic", "deletes a branch"),
+    ("git branch -D feature", "deletes a branch"), ("git branch --del --force topic", "deletes a branch"),
     ("git branch -M topic main", "overwrites a branch"),
     ("git push origin --delete feature", "remote"), ("git push -fu origin main", "remote"), ("git push origin main --forc", "remote"),
     ("git push --prune origin x", "remote"), ("git reset --har HEAD~1", "throws away work"), ("git stash drop", "throws away work"),
@@ -752,6 +752,227 @@ def test_each_change_to_the_hook_keys_is_classified(old: dict, new: dict, kind: 
     assert {change.kind for change in configguard.classify(old, new)} == {kind}, configguard.classify(old, new)
 
 
+# --- asks an owner found needless: a merged branch, a folder in a variable, a copy out ---------
+
+#: A protected pattern that any folder may hold, as a project's lint settings are protected.
+ANY_FOLDER = '\n[config]\nprotected = ["**/.markdownlint*"]\n'
+#: Deletes of a branch whose every commit the main line holds, as the hook itself checks. The plain
+#: forms are allowed; the rest are left to the host, since the safe list matches options exactly.
+MERGED_ALLOWED = ["git branch -d topic", "git branch --delete topic", "git branch -d -q topic"]
+MERGED_LEFT = ["git branch -dq topic", "git branch --del topic"]
+#: Deletes by force, of a remote-tracking branch (maybe the last name of what a remote dropped), of a
+#: name not plainly a local branch, of the main line itself, or with names only the shell will know.
+FORCED_DELETES = ["git branch -D topic", "git branch -d -f topic", "git branch -df topic", "git branch --delete --force topic",
+                  "git branch -d --forc topic", "git branch -dr origin/topic", "git branch -d --remotes origin/topic",
+                  "git branch -d 'n?tes'", "git branch -d nosuch", "git branch -d main", "git branch -d $NO_SUCH_VARIABLE"]
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("command", MERGED_ALLOWED + MERGED_LEFT)
+def test_a_branch_delete_git_refuses_unless_merged_never_asks(command: str, mode: str, tmp_path: Path) -> None:
+    allowed = mode == "allow-safe" and command in MERGED_ALLOWED
+    assert answer(project(tmp_path, MODES[mode]), tmp_path, command)[0] == ("allow" if allowed else "none")
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("command", FORCED_DELETES)
+def test_a_forced_or_remote_branch_delete_still_asks(command: str, mode: str, tmp_path: Path) -> None:
+    decision, reason = answer(project(tmp_path, MODES[mode]), tmp_path, command)
+    assert decision == "ask" and "deletes a branch" in reason, (decision, reason)
+
+
+def test_a_branch_delete_asks_unless_the_main_line_holds_its_commits(tmp_path: Path) -> None:
+    """git's own check trusts its idea of merged: an upstream set to the branch itself, or a detached
+    HEAD sitting on it, passes it. The hook asks the main line instead."""
+    world = project(tmp_path, SAFE)
+    world.branch("feature")
+    world.write("f.md")
+    world.commit("only on feature")
+    world.checkout("main")
+    for command in ("git branch -d feature", "git branch -d topic feature", "xargs git branch -d",
+                    "git -c branch.feature.remote=. -c branch.feature.merge=refs/heads/feature branch -d feature",
+                    "git -c x.y=z branch -d topic", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=x.y GIT_CONFIG_VALUE_0=z git branch -d topic"):
+        decision, reason = answer(world, tmp_path, command)
+        assert decision == "ask" and "deletes a branch" in reason, (command, decision, reason)
+    world.git("checkout", "-q", "--detach", "feature")
+    assert answer(world, tmp_path, "git branch -d feature")[0] == "ask"
+    assert answer(world, tmp_path, "git branch -d topic")[0] == "allow"
+
+
+#: The cleanup after a merge: names git lists as merged into the main line, filtered by grep alone.
+MERGED_FEEDS = ["git branch --merged main | grep -vE '^\\*|^\\s*main$' | xargs git branch -d",
+                "git branch --merged main | xargs git branch -d", "git branch --merged main | grep -v -e main | xargs -r git branch -d",
+                "git switch -q main && git merge -q --ff-only topic; git branch --merged main | grep -v main | xargs git branch -d"]
+#: Names from anything else, or changed on the way, or deleted by force.
+OTHER_FEEDS = ["git branch --merged main | grep -c x | xargs git branch -d", "git branch --merged main | grep -o x | xargs git branch -d",
+               "git branch --merged main | grep x notes.md | xargs git branch -d", "git branch --merged topic | xargs git branch -d",
+               "git branch --merged main |& xargs git branch -d", "cat notes.md | xargs git branch -d",
+               "git branch --merged main | sed s/x/y/ | xargs git branch -d", "git branch --merged main | xargs git branch -D",
+               "git branch --merged main | xargs -I{} git branch -d {}", "git -c x.y=z branch --merged main | xargs git branch -d",
+               "git branch --merged main 2>&1 | xargs git branch -d", "cat notes.md | xargs git branch -d topic",
+               "git branch --merged main |\nxargs git branch -d", "parallel git branch -d ::: topic",
+               "git branch --merged main | xargs git -c x.y=z branch -d", "git branch --merged $NO_SUCH_VARIABLE | xargs git branch -d"]
+
+
+@pytest.mark.parametrize("command", MERGED_FEEDS)
+def test_the_cleanup_after_a_merge_deletes_only_what_the_main_line_holds(command: str, tmp_path: Path) -> None:
+    decision, reason = answer(project(tmp_path, SAFE), tmp_path, command)
+    assert decision == "none", (decision, reason)  # no danger; xargs is not on the safe list, so the host decides
+
+
+@pytest.mark.parametrize("command", OTHER_FEEDS)
+def test_names_fed_from_anywhere_else_still_ask(command: str, tmp_path: Path) -> None:
+    decision, reason = answer(project(tmp_path, SAFE), tmp_path, command)
+    assert decision == "ask" and "deletes a branch" in reason, (decision, reason)
+
+
+def test_a_feed_read_in_one_repository_never_clears_a_delete_in_another(tmp_path: Path) -> None:
+    world = project(tmp_path, SAFE)
+    project(tmp_path, SAFE, name="other")  # it has a main line of its own, so only the -C can stop the feed
+    decision, reason = answer(world, tmp_path, "git branch --merged main | xargs git -C <above>/other branch -d")
+    assert decision == "ask" and "deletes a branch" in reason, (decision, reason)
+
+
+def test_a_planted_merge_check_is_caught(tmp_path: Path) -> None:
+    world = project(tmp_path, SAFE)
+    world.branch("feature")
+    world.commit("only on feature")
+    world.checkout("main")
+    broken = planted("hooks", "        if done is None or done.returncode != 0:\n            return False",
+                     "        if False:\n            return False")
+    assert answer(world, tmp_path, "git branch -d feature")[0] == "ask"
+    assert answer(world, tmp_path, "git branch -d feature", module=broken)[0] != "ask"
+
+
+#: A folder named by a variable the line sets earlier, where the shell surely set it: read as that folder.
+NAMED = [
+    "SP=<scratch>; rm -rf $SP/clone", 'SP=<scratch>; rm -rf "$SP/clone"', "SP=<scratch>; rm -rf ${SP}/clone",
+    "SP=<scratch> && rm -rf $SP/clone", "A=<scratch>; B=$A/clone; rm -rf $B", "SP=<scratch>\nrm -rf $SP/clone",
+    "SP=<scratch>; rsync -a --delete docs/ $SP/trial/", "SP=<scratch>; cd $SP/clone && git checkout -- notes.md",
+    "SP=<scratch>; mkdir -p $SP/trial && rm -rf $SP/trial", 'SP=<scratch>; bash -c "rm -rf $SP/clone"',
+    "SP=<scratch>; (rm -rf $SP/clone)", 'SP=<scratch>; echo "$(rm -rf $SP/clone)"',
+    "SP=<scratch>; SP=<root>; SP=<scratch>; rm -rf $SP/clone",
+]
+#: The same where the shell may not hold that value: never set, set again, or read by another shell.
+UNNAMED = [
+    "SP=<root>; rm -rf $SP/notes.md", "SP=<scratch>; SP=<root>; rm -rf $SP/notes.md",
+    "true || SP=<scratch>; rm -rf $SP/x", "false && SP=<scratch>; rm -rf $SP/x", "SP=<scratch> | true; rm -rf $SP/x",
+    "true | SP=<scratch>; rm -rf $SP/x", "SP=<scratch> & rm -rf $SP/x", "(SP=<scratch>); rm -rf $SP/x",
+    "SP=<scratch> rm -rf $SP/x", "SP=<scratch>; SP=<root> true; rm -rf $SP/notes.md",
+    "SP=<scratch>; bash -c 'rm -rf $SP/x'", "SP=<scratch>; eval 'rm -rf $SP/x'",
+    "SP=<scratch>; sh <<'EOF'\nrm -rf $SP/x\nEOF", "SP=<scratch>; find . -name x -exec sh -c 'rm -rf $SP/x' \\;",
+    "SP=<scratch>; for SP in <root>; do rm -rf $SP/notes.md; done", "SP=<scratch>; while true; do rm -rf $SP/x; SP=<root>; done",
+    "SP=<scratch>; if true; then SP=<root>; fi; rm -rf $SP/notes.md", "SP=<scratch>; { SP=<root>; }; rm -rf $SP/notes.md",
+    "SP=<scratch>; read SP; rm -rf $SP/x", "SP=<scratch>; export SP=<root>; rm -rf $SP/notes.md",
+    "SP=<scratch>; unset SP; rm -rf $SP/x", "SP=<scratch>; . ./env.sh; rm -rf $SP/x", "SP=<scratch>; source x; rm -rf $SP/x",
+    "SP=<scratch>; $NO_SUCH_VARIABLE; rm -rf $SP/x", "SP=<scratch>; printf -v SP %s <root>; rm -rf $SP/notes.md",
+    "IFS=/; SP=<scratch>; rm -rf $SP", "SP=<scratch>; IFS=/ true; rm -rf $SP", "SP='<scratch> <root>'; rm -rf $SP",
+    "SP=<scratch>/c*; rm -rf $SP", "SP=~/x; rm -rf $SP", "SP=$(pwd); rm -rf $SP/x", "SP=$NO_SUCH_VARIABLE; rm -rf $SP/x",
+    "PATH=<scratch>; rm -rf $PATH/clone", "HOME=<scratch>; rm -rf $HOME/clone", "SP+=<scratch>; rm -rf $SP/x",
+    "SP=; rm -rf $SP/x", "SP=<scratch>; rm -rf $SPX/x",
+    # an operator before a newline: the line goes on, so the assignment may be skipped
+    "X=<root>/data; false &&\nX=<scratch>/a; rm -rf $X", "X=<root>/data; true ||\nX=<scratch>/a; rm -rf $X",
+    "X=<root>/data; true ||\n\nX=<scratch>/a; rm -rf $X",
+    # code the outer shell has already filled in
+    'X=<root>/data; eval "X=<scratch>/a; rm -rf $X"', 'true && X=<root>/data; bash -c "X=<scratch>/a; rm -rf $X"',
+    "X=<root>/data; bash <<EOF\nX=<scratch>/a; rm -rf $X\nEOF",
+    # zsh reads on past $NAME: modifiers, subscripts, a name in another script
+    "X=<scratch>/a/notes.md; rm -f $X:t", "X=<scratch>/a; rm -rf $X:h", 'X=<scratch>/a; rm -rf "$X[1,3]"',
+    "X=<scratch>/a; rm -rf $X:s/a/b/", "X=<scratch>/a; rm -rf $Xé<root>/data",
+    # names the shell keeps or ties, and words that set a name as they are read
+    "_=<scratch>/a; echo <root>/data; rm -rf $_", "manpath=<scratch>/a; MANPATH=<root>/data; rm -rf $manpath",
+    "random=<scratch>/a; rm -rf $random/x", 'X=<scratch>/a; echo "$HOME[X=7]"; rm -rf $X',
+    "X=<scratch>/a; echo hi {X}>/dev/null; rm -rf $X",
+]
+
+
+@pytest.mark.parametrize("command", NAMED)
+def test_a_folder_named_by_a_variable_set_earlier_in_the_line_is_read_as_that_folder(command: str, tmp_path: Path) -> None:
+    (tmp_path / "scratch" / "trial").mkdir()
+    decision, reason = answer(project(tmp_path, SAFE), tmp_path, command)
+    assert decision == "none", (decision, reason)  # no danger; an assignment is not on the safe list, so the host decides
+
+
+@pytest.mark.parametrize("command", UNNAMED)
+def test_a_variable_the_shell_may_not_hold_is_never_trusted(command: str, tmp_path: Path) -> None:
+    decision, reason = answer(project(tmp_path, SAFE), tmp_path, command)
+    assert decision == "ask" and "delete" in reason, (decision, reason)
+
+
+#: A copy only reads what it copies: copying a folder or a protected file out of the project asks nothing.
+COPIES_OUT = [
+    "cp -R docs <scratch>/trial", "cp themis.toml <scratch>/", "cp -R .claude <scratch>/trial", "cp -- notes.md <scratch>/",
+    "rsync -a docs/ <scratch>/trial/docs/", "rsync -a --delete --exclude 'data/' ./ <scratch>/trial/",
+    "rsync -a --exclude .git --delete docs/ <scratch>/trial/", "rsync -avz --progress docs/ <scratch>/trial/",
+    "cp -t <scratch> themis.toml notes.md", "cp --target-directory=<scratch> themis.toml", "cp -Rp docs <scratch>/trial",
+]
+#: A copy that links to or removes its sources, whose destination a later option leaves unsure, or that
+#: writes elsewhere too: judged as a write to its sources, or to that place, as before.
+COPIES_JUDGED = [
+    ("cp -l themis.toml <scratch>/t", "themis.toml"), ("cp --link themis.toml <scratch>/t", "themis.toml"),
+    ("cp -s <root>/themis.toml <scratch>/t", "themis.toml"), ("cp -Rl docs <scratch>/t", "docs"),
+    ("ln themis.toml <scratch>/t", "themis.toml"), ("cp <scratch>/x.tar themis.toml -S .bak", "themis.toml"),
+    ("cp <scratch>/x.tar themis.toml $NO_SUCH_VARIABLE", "themis.toml"),
+    ("rsync -a <scratch>/clone/ .claude/ --exclude x", ".claude"), ("rsync -t <scratch>/clone/ .claude/", ".claude"),
+    ("rsync -a --remove-source-files docs/ <scratch>/trial/", "deletes"),
+    ("rsync -a --log-file themis.toml <scratch>/clone/ <scratch>/t/", "themis.toml"),
+    ("rsync -a --log-file=themis.toml <scratch>/clone/ <scratch>/t/", "themis.toml"),
+    ("rsync -a -T .claude <scratch>/clone/ <scratch>/t/", ".claude"), ("rsync -aTgrants <scratch>/clone/ <scratch>/t/", "grants"),
+    ("rsync -a --link-dest=<root> <scratch>/clone/ <scratch>/t/", "project"),
+    ("rsync -a --backup-dir data <scratch>/clone/ <scratch>/t/", "data"),
+    ("rsync -a --only-write-batch=themis.toml <scratch>/clone/ <scratch>/t/", "themis.toml"),
+    # options the copy's harmless list does not hold, or that it reads in another way
+    ("cp -- -t <scratch>/x.tar .claude", ".claude"), ("cp -at .claude <scratch>/x.tar <scratch>/d", ".claude"),
+    ("cp -S -t <scratch>/x.tar themis.toml", "themis.toml"), ("install -M themis.toml <scratch>/x.tar <scratch>/d/", "themis.toml"),
+    ("install -m 644 themis.toml <scratch>/d/", "themis.toml"), ("cp --parents themis.toml <scratch>/d", "themis.toml"),
+    ("rsync --remove-sent-files notes.md <scratch>/d/", "deletes"), ("rsync -a --remove-sent docs/ <scratch>/d/", "deletes"),
+    ("rsync -a --write-b themis.toml <scratch>/clone/ <scratch>/t/", "themis.toml"),
+    ("rsync -a --log-f=themis.toml <scratch>/clone/ <scratch>/t/", "themis.toml"),
+    ("rsync -aK docs/ <scratch>/t/", "docs"), ("rsync -a --delete <scratch>/clone/", "deletes"),
+]
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("command", COPIES_OUT)
+def test_a_copy_out_of_the_project_only_reads_its_sources(command: str, mode: str, tmp_path: Path) -> None:
+    (tmp_path / "scratch" / "trial").mkdir()
+    decision, reason = answer(project(tmp_path, MODES[mode] + KEEP + ANY_FOLDER), tmp_path, command)
+    if mode == "ask" and "--delete" in command:  # a temp folder is scratch only in allow-safe
+        assert decision == "ask" and "deletes files" in reason, (decision, reason)
+    else:
+        assert decision == "none", (decision, reason)  # no danger; cp, rsync and install are not on the safe list
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize(("command", "said"), COPIES_JUDGED, ids=[case[0] for case in COPIES_JUDGED])
+def test_a_copy_that_links_removes_or_is_unsure_is_judged_as_a_write(command: str, said: str, mode: str,
+                                                                       tmp_path: Path) -> None:
+    decision, reason = answer(project(tmp_path, MODES[mode] + KEEP + ANY_FOLDER), tmp_path, command)
+    assert decision == "ask" and said in reason, (decision, reason)
+
+
+def test_the_scratch_trial_that_stopped_an_owners_session_asks_nothing(tmp_path: Path) -> None:
+    """The calls that stopped a session on 20 Nov 2026: copy the project into a scratch folder named
+    by a variable, copy a folder of it again, and put back a file in the copy."""
+    world = project(tmp_path, SAFE + KEEP + ANY_FOLDER)
+    (tmp_path / "scratch" / "trial").mkdir()
+    for command in (
+        "SP=<scratch>; mkdir -p $SP/trial && cd <root> && rsync -a --delete --exclude 'data/' --exclude 'node_modules' ./ $SP/trial/",
+        "SP=<scratch>; rsync -a docs/ $SP/trial/docs/",
+        "SP=<scratch>; cd $SP/trial && git checkout -q -- themis.toml 2>/dev/null; cp <root>/themis.toml $SP/trial/",
+    ):
+        assert answer(world, tmp_path, command) == ("none", ""), command
+    assert answer(world, tmp_path, "SP=<scratch>; rsync -a --delete $SP/trial/ ./")[0] == "ask"  # into the project: still asks
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_newline_after_an_operator_still_joins_the_cd_to_it(mode: str, tmp_path: Path) -> None:
+    for command in ("true ||\ncd <scratch>/d && rm -rf docs", "false &&\ncd <scratch>/d; rm -rf docs",
+                    "echo x |\ncd <scratch>/d && rm -rf docs"):
+        decision, reason = answer(project(tmp_path, MODES[mode], name=f"p{abs(hash(command))}"), tmp_path, command)
+        assert decision == "ask" and "deletes" in reason, (command, decision, reason)
+
+
 # --- planted bugs ------------------------------------------------------------------------------
 
 USER_DENY = {"<home>/.claude/settings.json": {"permissions": {"deny": ["Bash(git status*)"]}}}
@@ -859,6 +1080,50 @@ PLANTS = [
      "rm -rf <scratch>/{x,../repo}"),
     ("a variable counts as plain", "shell", "        if quoted:\n            word.quoted = True\n        else:\n            word.bare = True",
      "        pass", SAFE, {}, "touch $HOME/x"),
+    ("a forced branch delete counts as merged", "hooks", '        elif set(flag[1:]) - set("dq"):\n            return False',
+     "        elif False:\n            return False", SAFE, {}, "git branch -D topic"),
+    ("a branch delete may take the main line", "hooks",
+     "        if name == base or not _local_branch(folder, name):\n            return False",
+     "        if False:\n            return False", SAFE, {}, "git branch -d main"),
+    ("a branch delete is judged against the main line with a setting given", "hooks",
+     "_git_local(sub, rest, flags, folder, None if configured else ctx.policy.main, fed)",
+     "_git_local(sub, rest, flags, folder, ctx.policy.main, fed)", SAFE, {}, "git -c x.y=z branch -d topic"),
+    ("a newline after an operator ends it", "hooks", '            before = pieces[back]  # a newline after an operator',
+     '            pass  # a newline after an operator', SAFE, {}, "true ||\ncd <scratch>/d && rm -rf docs"),
+    ("zsh's modifiers are taken for the end of a name", "shell", "        if name in self.known and ends:",
+     "        if name in self.known:", SAFE, {}, "X=<scratch>/a/notes.md; rm -f $X:t"),
+    ("a name the shell keeps is read back", "hooks", "    return folded in SHELL_NAMES or folded.startswith(SHELL_PREFIXES)",
+     "    return False", SAFE, {}, "_=<scratch>/a; echo <root>/data; rm -rf $_"),
+    ("a word that sets a name is trusted", "hooks", 'if "IFS" in ctx.text or NAME_SETTERS.search(ctx.text):',
+     'if "IFS" in ctx.text:', SAFE, {}, 'X=<scratch>/a; echo "$HOME[X=7]"; rm -rf $X'),
+    ("code the outer shell filled in follows its names", "hooks", "dict(self.names) if names else {}, self.follows and names)",
+     "dict(self.names) if names else {}, self.follows)", SAFE, {},
+     'true && X=<root>/data; bash -c "X=<scratch>/a; rm -rf $X"'),
+    ("a copy option off the harmless list only reads", "hooks", "            if name not in longs:\n                return False",
+     "            if False:\n                return False", SAFE, {}, "rsync -a --write-b themis.toml <scratch>/clone/ <scratch>/t/"),
+    ("rsync with one file trusts its delete", "hooks", 'if len(files) > 1 else "This command deletes files."',
+     'if files else "This command deletes files."', SAFE, {}, "rsync -a --delete <scratch>/clone/"),
+    ("a feed from anything clears a delete", "hooks",
+     'return [word.text for word in first.words] == ["git", "branch", "--merged", base] and all(map(_grep_filter, filters))',
+     "return all(map(_grep_filter, filters))", SAFE, {}, "cat notes.md | xargs git branch -d"),
+    ("a grep in the feed may read a file", "hooks", "    return patterns == 1", "    return True", SAFE, {},
+     "git branch --merged main | grep x notes.md | xargs git branch -d"),
+    ("names xargs adds from elsewhere count as held", "hooks", "    if fed is False:\n        return False",
+     "    if False:\n        return False", SAFE, {}, "cat notes.md | xargs git branch -d topic"),
+    ("a value set after || is read back", "hooks", 'sure = (line.follows and before in ("", ";", "\\n", "(")',
+     "sure = (line.follows and True", SAFE, {}, "true || SP=<scratch>; rm -rf $SP/x"),
+    ("a value set in a pipe is read back", "hooks", '"(") and not _piped(after)', '"(")', SAFE, {},
+     "SP=<scratch> | true; rm -rf $SP/x"),
+    ("a new shell sees this shell's names", "hooks", "_read(code, line.child(names=False), ctx",
+     "_read(code, line.child(), ctx", SAFE, {}, "SP=<scratch>; bash -c 'rm -rf $SP/x'"),
+    ("a copy that links only reads", "hooks", "        elif set(text[1:]) - set(shorts):\n            return False",
+     "        elif False:\n            return False", SAFE, {}, "cp -l themis.toml <scratch>/t"),
+    ("a word that may expand leaves the last word trusted", "hooks", "            return False  # it may become several words",
+     "            pass  # it may become several words", SAFE, {}, "cp <scratch>/x.tar themis.toml $NO_SUCH_VARIABLE"),
+    ("rsync's log and backup places are not judged", "hooks", "            written += _rsync_writes(argw)", "            pass",
+     SAFE, {}, "rsync -a --log-file=themis.toml <scratch>/clone/ <scratch>/t/"),
+    ("rsync's removed sources are not judged", "hooks", "reason = _deleting(files[:-1], line, ctx)", "reason = None",
+     SAFE, {}, "rsync -a --remove-source-files docs/ <scratch>/trial/"),
 ]
 
 

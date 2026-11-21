@@ -42,9 +42,10 @@ MUST_ASK = [
     ("git clean -fdx", "deletes"),
     ("git -C /somewhere clean -fdx", "deletes"),
     ("git -c core.pager=cat rm notes.md", "deletes"),
-    ("git branch -d feature", "deletes a branch"),
+    ("git branch -d feature", "deletes a branch"),  # no repository here proves the main line holds it
     ("git branch -D feature", "deletes a branch"),
     ("git -C /somewhere branch --delete feature", "deletes a branch"),
+    ("git branch -dr origin/feature", "deletes a branch"),
     ("git push origin --delete feature", "remote"),
     ("git push origin :feature", "remote"),
     ("git push --force origin main", "remote"),
@@ -83,6 +84,7 @@ MUST_PASS = [
     "git branch feature",
     "git branch -v",
     "git branch --list 'feat/*'",
+    "cp themis.toml /tmp/themis-copy.toml",  # a copy reads its source
     "git push origin feature",
     "git push -u origin feature",
     "git commit -m 'rm the old path'",
