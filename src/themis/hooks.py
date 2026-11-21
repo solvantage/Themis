@@ -90,8 +90,72 @@ INTERPRETERS = {"python", "python2", "python3", "pypy", "pypy3", "node", "nodejs
                 "php", "osascript", "awk", "gawk", "mawk", "nawk", "lua", "tclsh", "Rscript", "julia"}
 WRITERS = {"tee", "mv", "cp", "install", "truncate", "touch", "ln", "dd", "rsync"}
 COPIERS = {"cp", "ln", "install", "rsync"}  # writers that change only where they write to, never what they read
+#: The copies that may only read their sources, and the only options (short letters, long names
+#: matched exactly) with which they still do. Any other option, an abbreviation included, leaves the
+#: copy's sources judged as written: it may link to them (`cp -l`), remove them, write a backup or a
+#: log beside them, or read its destination another way. `ln` always links; `install` has options
+#: that write elsewhere (BSD's `-M`, `-B`), so neither is here.
+COPY_READS = {
+    "cp": ("aRrpvfniHLPXcxdu", {"recursive", "archive", "verbose", "force", "no-clobber", "update", "dereference",
+                                "no-dereference", "preserve", "no-preserve", "one-file-system", "interactive", "sparse",
+                                "reflink", "target-directory"}),
+    "rsync": ("avrlptgoDzhPnucqiHAXSWxEkLOJmy0d", {
+        "archive", "verbose", "recursive", "links", "perms", "times", "group", "owner", "devices", "specials",
+        "compress", "human-readable", "progress", "partial", "dry-run", "update", "checksum", "itemize-changes",
+        "quiet", "hard-links", "acls", "xattrs", "sparse", "whole-file", "one-file-system", "delete", "delete-before",
+        "delete-during", "delete-delay", "delete-after", "delete-excluded", "ignore-existing", "existing", "size-only",
+        "ignore-times", "stats", "prune-empty-dirs", "omit-dir-times", "omit-link-times", "no-perms", "no-owner",
+        "no-group", "no-times", "copy-links", "copy-dirlinks", "safe-links", "copy-unsafe-links", "numeric-ids",
+        "mkpath", "executability", "dirs", "from0", "8-bit-output", "cvs-exclude", "fuzzy", "exclude", "include",
+        "filter", "exclude-from", "include-from", "files-from", "chmod", "timeout", "contimeout", "bwlimit",
+        "max-size", "min-size", "max-delete", "info", "debug", "out-format", "modify-window", "block-size",
+        "compress-level", "skip-compress", "checksum-choice", "compress-choice", "stderr", "outbuf"}),
+}
+#: The options with which rsync removes what it copies from, under each name it takes.
+RSYNC_REMOVES = ("remove-source-files", "remove-sent-files")
+#: rsync's options that take a value, as the next word or after `=`, and its short ones that do.
+RSYNC_VALUED = {
+    "backup-dir", "suffix", "chmod", "max-delete", "max-size", "min-size", "max-alloc", "block-size", "rsh",
+    "rsync-path", "remote-option", "out-format", "log-file", "log-file-format", "password-file", "early-input",
+    "bwlimit", "stop-after", "stop-at", "write-batch", "only-write-batch", "read-batch", "protocol", "iconv",
+    "checksum-seed", "checksum-choice", "cc", "compress-choice", "zc", "compress-level", "zl", "skip-compress",
+    "temp-dir", "compare-dest", "copy-dest", "link-dest", "partial-dir", "filter", "exclude", "exclude-from",
+    "include", "include-from", "files-from", "address", "port", "sockopts", "contimeout", "timeout", "outbuf",
+    "modify-window", "usermap", "groupmap", "chown", "copy-as", "info", "debug", "stderr",
+}
+RSYNC_SHORT = "efTBM@"
+#: Of those, the places rsync writes to, or hard-links its copies from, beside its destination.
+RSYNC_WRITES = {"backup-dir", "temp-dir", "partial-dir", "log-file", "write-batch", "only-write-batch", "link-dest"}
 IN_PLACE = {"sed", "perl", "ruby"}
 KEYWORDS = {"if", "then", "else", "elif", "while", "until", "do", "done", "fi", "!", "{", "}"}
+#: Builtins that may set, unset or import names in the shell itself, or run code that does.
+SETS_NAMES = {"export", "declare", "typeset", "local", "readonly", "read", "unset", "getopts", "mapfile", "readarray",
+              "printf", "print", "let", "eval", "source", ".", "set", "setopt", "unsetopt", "emulate", "for", "select",
+              "foreach", "repeat", "vared", "zparseopts", "integer", "float", "alias", "unalias", "trap", "enable",
+              "disable", "autoload", "shift", "functions", "wait", "zstyle", "strftime", "zformat", "zregexparse",
+              "getln", "zle", "zmodload", "coproc", "pushd", "popd"}
+#: Names whose value the hook never reads back, compared without case: the shell sets them itself
+#: (`_` is the last word of the command before), ties one to another (zsh's `path` to `PATH`), or
+#: reads them to find a program, a folder or a word. Nor any name with one of the prefixes.
+SHELL_NAMES = {
+    "_", "path", "manpath", "fpath", "cdpath", "mailpath", "module_path", "fignore", "psvar", "watch", "home", "pwd",
+    "oldpwd", "ifs", "env", "zdotdir", "globignore", "shellopts", "random", "srandom", "seconds", "epochseconds",
+    "epochrealtime", "lineno", "optarg", "optind", "opterr", "reply", "pipestatus", "status", "argv", "argc", "ppid",
+    "uid", "euid", "gid", "egid", "username", "funcname", "funcstack", "dirstack", "groups", "hostname", "hosttype",
+    "machtype", "ostype", "vendor", "cputype", "shlvl", "columns", "lines", "ttyidle", "errno", "signals", "options",
+    "parameters", "commands", "functions", "aliases", "builtins", "modules", "jobstates", "jobtexts", "jobdirs",
+    "nameddirs", "userdirs", "termcap", "terminfo", "mapfile", "sysparams", "historywords", "widgets", "match",
+    "mbegin", "mend", "keys", "numeric", "killring", "cursor", "buffer", "lbuffer", "rbuffer", "mark", "tty", "mail",
+    "mailcheck", "keytimeout", "listmax", "logcheck", "nullcmd", "readnullcmd", "term", "tmpprefix", "tmpsuffix",
+    "wordchars", "fcedit", "funcnest", "inputrc", "tmout", "timefmt", "timeformat", "reporttime", "sprompt", "stty",
+    "period", "copro", "coproc", "lang", "language", "posixly_correct", "try_block_error", "try_block_interrupt",
+}
+SHELL_PREFIXES = ("git_", "bash", "zsh_", "zle_", "comp", "lc_", "hist", "ps", "prompt", "rprompt", "readline", "epoch")
+ASSIGNED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+#: Words that set a name as the shell reads them: a zsh subscript (`$HOME[X=7]`), a named descriptor.
+NAME_SETTERS = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*\[|\{[A-Za-z_][A-Za-z0-9_]*\}\s*[<>]")
+#: A value the hook reads back: one word the shell neither splits nor globs, in either shell.
+PLAIN_VALUE = re.compile(r"[A-Za-z0-9._/@%+:-]+")
 CHANGE_FOLDER = {"cd", "pushd", "popd", "source", ".", "eval", "exec", "builtin", "command", "alias", "unalias"}
 CLOUD = {"aws", "gcloud", "gsutil", "az", "gh", "glab", "kubectl", "helm", "terraform", "pulumi", "heroku", "fly",
          "flyctl", "vercel", "netlify", "doctl", "firebase", "supabase", "wrangler", "docker", "podman"}
@@ -383,9 +447,17 @@ class _Line:
     tree_changed: bool = False  # a command that may make links ran: no later write or delete is safe
     made_folders: bool = False  # a folder was made: no later git is safe, since it may be a repository
     made: list[str] = field(default_factory=list)  # the folders made, past links: nothing written under them is safe
+    names: dict[str, str] = field(default_factory=dict)  # the values the line surely set, read back into `$NAME`
+    follows: bool = True  # False when a command in the line may set a name in a way the hook does not follow
+    pipe: list[Simple | None] = field(default_factory=list)  # the commands piped into this one; None for a `|&`
 
-    def child(self) -> _Line:
-        return _Line(self.cwd, self.mutated, False, self.tree_changed, self.made_folders, self.made)
+    def child(self, *, names: bool = True) -> _Line:
+        """The line a substitution or an inner command runs on. A new shell, or a program run without
+        one, never sees the names this shell set, so it starts with none; and since the outer shell
+        may already have put its own values into that code (`eval "…$X"`, `bash -c "…$X"`, an
+        unquoted here-document), it follows none it sets either."""
+        return _Line(self.cwd, self.mutated, False, self.tree_changed, self.made_folders, self.made,
+                     dict(self.names) if names else {}, self.follows and names)
 
 
 @dataclass(frozen=True)
@@ -434,20 +506,106 @@ def _read(text: str, line: _Line, ctx: _Context, reading: Reading, depth: int, *
         reading.ask(_scan(text, ctx))
         reading.texts += [part.strip() for part in re.split(r"[;&|\n()]+", text) if part.strip()]
         return
-    saved: list[tuple[Path | None, bool]] = []
+    if not _follows_names(pieces, ctx):
+        line.names, line.follows = {}, False
+    saved: list[tuple[Path | None, bool, dict[str, str]]] = []
+    pipe: list[Simple | None] = []
     for index, piece in enumerate(pieces):
         if isinstance(piece, str):
+            pipe = [*pipe, None] if piece == "|&" else pipe if piece == "|" else []
             if piece == "(":
-                saved.append((line.cwd, line.moved))
+                saved.append((line.cwd, line.moved, dict(line.names)))
             elif piece == ")":
                 if saved:
-                    line.cwd, line.moved = saved.pop()
+                    line.cwd, line.moved, line.names = saved.pop()
             elif piece != "&&" and line.moved:
                 line.cwd, line.moved = None, False  # the `cd` before it may not have run
             continue
         before = pieces[index - 1] if index and isinstance(pieces[index - 1], str) else ""
+        back = index - 1
+        while back >= 0 and pieces[back] == "\n":
+            back -= 1
+        if before == "\n" and back >= 0 and pieces[back] in ("&&", "||", "|", "|&"):
+            before = pieces[back]  # a newline after an operator only goes on with the line
         after = pieces[index + 1] if index + 1 < len(pieces) and isinstance(pieces[index + 1], str) else ""
+        if line.names:
+            piece = _with_values(piece, line.names)
+        line.pipe = pipe
         _simple(piece, str(before), str(after), line, ctx, reading, depth)
+        pipe = [*pipe, piece]
+
+
+def _follows_names(pieces: list[Simple | str], ctx: _Context) -> bool:
+    """True when the hook can follow every name the line sets: no loop, condition or group, which
+    may set one again or not at all; no builtin that sets, unsets or imports names, or runs code
+    that may (`read`, `export`, `eval`, `source`, ...); no program named by a variable; and no IFS,
+    which changes where a value splits. None of these is on the safe list, so each already makes
+    every later write or delete unsafe (`tree_changed`); this holds should the list ever grow. Nor a
+    word that sets a name as it is read, on the safe list too: zsh's `$NAME[X=7]`, or `{X}>` naming a
+    descriptor."""
+    if "IFS" in ctx.text or NAME_SETTERS.search(ctx.text):
+        return False
+    for piece in pieces:
+        if isinstance(piece, str) or not piece.words:
+            continue
+        words = [word.text for word in piece.words]
+        start = _start(words)
+        if not piece.words[0].literal or any(word in KEYWORDS for word in words[:start]):
+            return False
+        if start < len(words) and (not piece.words[start].literal or os.path.basename(words[start]) in SETS_NAMES):
+            return False
+    return True
+
+
+def _with_values(simple: Simple, names: dict[str, str]) -> Simple:
+    """The command with the value of each name the line set put in for its `$NAME` or `${NAME}`.
+    A here-document's delimiter and text are left as written."""
+    def word(each: Word) -> Word:
+        if not each.expands or "$" not in each.raw:
+            return each
+        try:
+            return shell.read_word(each.raw, names)
+        except shell.Unreadable:
+            return each
+
+    return Simple(assigns=[word(each) for each in simple.assigns], words=[word(each) for each in simple.words],
+                  redirects=[shell.Redirect(op=redirect.op, fd=redirect.fd, body=redirect.body,
+                                            target=redirect.target if redirect.op in ("<<", "<<-") else word(redirect.target))
+                             for redirect in simple.redirects])
+
+
+def _assignment(simple: Simple) -> bool:
+    """True for a command of plain assignments only: each `NAME=value`, with no substitution, to a
+    name that does not change how the shell finds a program, a folder or a word, or where git works.
+    It runs nothing and changes no file."""
+    if simple.words or simple.redirects or not simple.assigns:
+        return False
+    for word in simple.assigns:
+        name = word.text.split("=", 1)[0]
+        if not word.literal or word.subs or not ASSIGNED.fullmatch(name) or _shell_name(name):
+            return False
+    return True
+
+
+def _shell_name(name: str) -> bool:
+    """True for a name the shell sets, ties or reads itself, compared without case."""
+    folded = name.casefold()
+    return folded in SHELL_NAMES or folded.startswith(SHELL_PREFIXES)
+
+
+def _remember(simple: Simple, before: str, after: str, line: _Line) -> None:
+    """Keep each value a plain assignment sets, when the shell surely runs it in this shell: first in
+    the line, or after `;`, a newline or `(`; not in a pipe or the background; one assignment, or
+    several that read no name, since each sees the ones before it; and a plain value. Any other
+    assignment makes its names unknown."""
+    sure = (line.follows and before in ("", ";", "\n", "(") and not _piped(after)
+            and (len(simple.assigns) == 1 or not any("$" in word.raw for word in simple.assigns)))
+    for word in simple.assigns:
+        name, _, value = word.text.partition("=")
+        if sure and PLAIN_VALUE.fullmatch(value):
+            line.names[name] = value
+        else:
+            line.names.pop(name, None)
 
 
 def _piped(operator: str) -> bool:
@@ -464,6 +622,11 @@ def _simple(simple: Simple, before: str, after: str, line: _Line, ctx: _Context,
     reading.ask(_danger(simple, line, ctx))
     safe = _safe(simple, line, ctx)
     reading.safe = reading.safe and safe
+    if _assignment(simple):
+        _remember(simple, before, after, line)
+        return  # it runs nothing and changes no file, so a later `cd` may still be followed
+    for word in simple.assigns:  # set for one command only, or not plainly: unknown from here on
+        line.names.pop(re.split(r"[+\[=]", word.text, maxsplit=1)[0], None)
     head = simple.words[0] if simple.words else None
     program = head.text if head is not None and head.literal else ""
     if program == "cd" and not simple.assigns:
@@ -691,7 +854,8 @@ def _written(program: str, args: list[Word], cwd: Path | None) -> tuple[list[Wor
         return list(args), None
     operands = [word for word in args if not word.text.startswith("-") or word.text == "-"]
     texts = [word.text for word in args]
-    named = _flag(texts, "-t") or _flag(texts, "--target-directory")
+    options = texts[:texts.index("--")] if "--" in texts else texts  # after `--`, a `-t` is a file
+    named = _flag(options, "-t") or _flag(options, "--target-directory")
     if named is not None:
         folder = next((word for word in operands if word.text == named), Word(text=named, raw=named))
         sources = [word for word in operands if word is not folder]
@@ -711,6 +875,83 @@ def _written(program: str, args: list[Word], cwd: Path | None) -> tuple[list[Wor
         found.append(Word(text=text, raw=text, glob=folder.glob or source.glob, quoted=folder.quoted or source.quoted,
                           bare=folder.bare or source.bare))
     return found or [folder], folder
+
+
+def _rsync_files(args: list[Word]) -> list[Word]:
+    """The files an rsync names: its words that are not an option or an option's value."""
+    found, skip, ended = [], False, False
+    for word in args:
+        text = word.text
+        if skip:
+            skip = False
+        elif ended or not text.startswith("-") or text == "-":
+            found.append(word)
+        elif text == "--":
+            ended = True
+        elif text.startswith("--"):
+            skip = "=" not in text and text[2:] in RSYNC_VALUED
+        else:
+            at = next((index for index, char in enumerate(text[1:], 1) if char in RSYNC_SHORT), None)
+            skip = at == len(text) - 1  # the value is the next word; else it is the rest of this one
+    return found
+
+
+def _rsync_writes(args: list[Word]) -> list[Word]:
+    """The places an rsync writes to, or hard-links its copies from, beside its destination: a
+    backup, temp or partial folder, a log or batch file, a `--link-dest` folder."""
+    found = []
+    for index, word in enumerate(args):
+        text, after = word.text, args[index + 1] if index + 1 < len(args) else None
+        if text.startswith("--"):
+            name, equals, value = text[2:].partition("=")
+            # rsync may take a long name cut short; with `=` its value is plain to see. A short one
+            # with its value apart is not on the harmless list, so that value is judged as a source.
+            if equals and name and any(full.startswith(name) for full in RSYNC_WRITES):
+                found.append(Word(text=value, raw=value, quoted=word.quoted, bare=word.bare, glob=word.glob))
+            elif name in RSYNC_WRITES and after is not None:
+                found.append(after)
+        elif text.startswith("-") and "T" in text[1:]:
+            value = text[text.index("T", 1) + 1:]
+            if value:
+                found.append(Word(text=value, raw=value, quoted=word.quoted, bare=word.bare, glob=word.glob))
+            elif after is not None:
+                found.append(after)
+    return found
+
+
+def _only_reads(program: str, args: list[Word]) -> bool:
+    """True when a copy only reads what it copies, so its sources are not judged as written: cp or
+    rsync, each word plain, every option on its harmless list, and no option after its first file,
+    so its last word is surely where it writes. Any other copy has its sources judged as written,
+    as before."""
+    if program not in COPY_READS:
+        return False
+    shorts, longs = COPY_READS[program]
+    seen = ended = skip = False
+    for word in args:
+        text = word.text
+        if word.expands or word.glob or word.brace or word.tilde:
+            return False  # it may become several words, or an option
+        if skip:
+            skip = False
+        elif ended and text.startswith("-") and text != "-":
+            return False  # a file named like an option, which another reading takes for one
+        elif ended or text == "-" or not text.startswith("-"):
+            seen = True
+        elif text == "--":
+            ended = True
+        elif seen:
+            return False  # an option after a file: the last word may not be where it writes
+        elif text == "-t" and program == "cp":
+            skip = True  # the folder it writes into, which `_written` reads
+        elif text.startswith("--"):
+            name, equals, _ = text[2:].partition("=")
+            if name not in longs:
+                return False
+            skip = not equals and (name in RSYNC_VALUED if program == "rsync" else name == "target-directory")
+        elif set(text[1:]) - set(shorts):
+            return False
+    return seen
 
 
 def _in_place(program: str, args: list[str]) -> bool:
@@ -777,8 +1018,14 @@ def _danger(simple: Simple, line: _Line, ctx: _Context) -> str | None:
         operands = [word for word in argw if not word.text.startswith("-")]
         if any(_remote(word.text) for word in operands) or any(_short(arg, "e") or _long(arg, "rsh") for arg in args):
             return "This command reaches a remote machine."
-        if operands and any(_long(arg, "delete", "remove-source-files") or arg.startswith("--del") for arg in args):
-            reason = _deleting(operands[-1:], line, ctx)
+        files = _rsync_files(argw)
+        if any(_long(arg, "delete", *RSYNC_REMOVES) or arg.startswith("--del") for arg in args):
+            # With one file, rsync may take the folder it runs in for the other end.
+            reason = _deleting(files[-1:], line, ctx) if len(files) > 1 else "This command deletes files."
+            if reason:
+                return reason
+        if len(files) > 1 and any(_long(arg, *RSYNC_REMOVES) for arg in args):
+            reason = _deleting(files[:-1], line, ctx)  # what it copies, it then deletes
             if reason:
                 return reason
     if program in ("curl", "wget") and _sends(program, args):
@@ -821,10 +1068,14 @@ def _danger(simple: Simple, line: _Line, ctx: _Context) -> str | None:
         return "Only the owner attests as the owner."
     targets, kept = list(moved), list(moved)
     if program in WRITERS or (program in IN_PLACE and _in_place(program, args)):
-        written, folder = _written(program, argw, cwd)
+        written, folder = _written(program, _rsync_files(argw) if program == "rsync" else argw, cwd)
         sources = [word for word in argw if word is not folder and (not word.text.startswith("-") or word.text == "-")]
         if program not in COPIERS and program != "mv":
             sources = list(argw)
+        elif _only_reads(program, argw):
+            sources = []  # a copy reads what it copies: only where it writes is judged
+        if program == "rsync":
+            written += _rsync_writes(argw)
         targets += sources + written
         kept += written + (sources if program == "mv" else [])
     if program == "dd":
@@ -884,11 +1135,15 @@ def _git_subcommand(args: list[str]) -> tuple[str, list[str]]:
     return (args[index], args[index + 1:]) if index < len(args) else ("", [])
 
 
-def _git_local(sub: str, rest: list[str], flags: list[str], cwd: Path | None) -> str | None:
-    """What a git command deletes or throws away in its own repository, or None."""
+def _git_local(sub: str, rest: list[str], flags: list[str], cwd: Path | None, main: str | None = None,
+               fed: bool | None = None) -> str | None:
+    """What a git command deletes or throws away in its own repository, or None. `main` is the
+    project's main line, or None when a branch delete may not be judged against it; `fed` says
+    whether a program such as xargs adds names from a merged feed (True) or from elsewhere (False)."""
     if sub in ("rm", "clean"):
         return "This command deletes files."
-    if sub == "branch" and any(_long(flag, "delete") or _short(flag, "dD") for flag in flags):
+    if sub == "branch" and any(_long(flag, "delete") or _short(flag, "dD") for flag in flags) and not (
+            _merged_only(flags) and main is not None and _holds_all(_operands(rest), cwd, main, fed)):
         return "This command deletes a branch."
     if sub == "branch" and any(_long(flag, "force") or _short(flag, "MCf") for flag in flags):
         return "This command overwrites a branch."
@@ -909,6 +1164,93 @@ def _git_local(sub: str, rest: list[str], flags: list[str], cwd: Path | None) ->
         if worktree or not staged:
             return "This command throws away work."
     return None
+
+
+def _merged_only(flags: list[str]) -> bool:
+    """True for a branch delete git itself refuses unless the branch is merged: `-d` or `--delete`,
+    with at most `-q`. Never `-D` or force, nor a remote-tracking branch (`-r`), which may be the last
+    name of commits its remote dropped."""
+    for flag in flags:
+        if flag.startswith("--"):
+            if flag != "--" and not (_long(flag, "delete") or _long(flag, "quiet")):
+                return False
+        elif set(flag[1:]) - set("dq"):
+            return False
+    return True
+
+
+def _in_main(names: list[str], folder: Path | None, main: str) -> bool:
+    """True when each branch named is plainly an existing local branch, not the main line, whose
+    every commit the main line holds, as the hook sees it itself: deleting it loses nothing. git's
+    own check is not enough, since it trusts an upstream (one set to the branch itself passes) or
+    a detached HEAD sitting on the branch."""
+    base = _main_line(folder, main)
+    if folder is None or not names or not base:
+        return False
+    for name in names:
+        if name == base or not _local_branch(folder, name):
+            return False
+        done = _git_run(folder, "merge-base", "--is-ancestor", f"refs/heads/{name}", f"refs/heads/{base}")
+        if done is None or done.returncode != 0:
+            return False
+    return True
+
+
+def _main_line(folder: Path | None, main: str) -> str:
+    """The local branch that is the project's main line: the one the manifest names, else `main`
+    or `master`; "" when there is none."""
+    if folder is None:
+        return ""
+    base = main.removeprefix("refs/").removeprefix("heads/") or next(
+        (name for name in ("main", "master") if _local_branch(folder, name)), "")
+    return base if base and _local_branch(folder, base) else ""
+
+
+def _holds_all(names: list[str], folder: Path | None, main: str, fed: bool | None) -> bool:
+    """True when the main line holds every branch a delete names: those on the line, and with a
+    merged feed those it adds, which the main line holds as the command runs. Never when a program
+    adds names from anywhere else."""
+    if fed is False:
+        return False
+    if fed:
+        return not names or _in_main(names, folder, main)
+    return _in_main(names, folder, main)
+
+
+#: grep's options that only choose which lines pass, never change one.
+GREP_KEEPS = {"--invert-match", "--extended-regexp", "--fixed-strings", "--line-regexp", "--ignore-case", "--word-regexp"}
+
+
+def _merged_feed(pipe: list[Simple | None], wrappers: list[str], folder: Path | None, main: str) -> bool:
+    """True when the names xargs adds come from `git branch --merged MAIN`, through grep filters only,
+    so each is a branch the main line holds as the command runs: the cleanup after a merge."""
+    base = _main_line(folder, main)
+    if not base or wrappers not in (["xargs"], ["xargs", "-r"], ["xargs", "--no-run-if-empty"]) or not pipe or None in pipe:
+        return False
+    first, *filters = [each for each in pipe if each is not None]
+    if first.assigns or first.redirects or not all(word.literal for word in first.words):
+        return False
+    return [word.text for word in first.words] == ["git", "branch", "--merged", base] and all(map(_grep_filter, filters))
+
+
+def _grep_filter(simple: Simple) -> bool:
+    """grep that only drops lines of what it reads: one pattern, no file, no option that changes a line."""
+    words = simple.words
+    if simple.assigns or simple.redirects or not words or words[0].text != "grep" or not all(w.literal for w in words):
+        return False
+    patterns, index = 0, 1
+    while index < len(words):
+        text = words[index].text
+        if text in ("-e", "--regexp") and index + 1 < len(words):
+            patterns, index = patterns + 1, index + 2
+            continue
+        if text.startswith("--") and text not in GREP_KEEPS:
+            return False
+        if text.startswith("-") and not text.startswith("--") and (text == "-" or set(text[1:]) - set("vEFxiw")):
+            return False
+        patterns += not text.startswith("-")
+        index += 1
+    return patterns == 1
 
 
 def _git_danger(simple: Simple, args: list[str], argw: list[Word], line: _Line,
@@ -940,7 +1282,16 @@ def _git_own_danger(simple: Simple, args: list[str], argw: list[Word], line: _Li
         targets = [Word(text=text, raw=text) for text in _operands(rest[1:])]
         if not targets or not all(_temp_word(target, _Line(folder, tree_changed=line.tree_changed), ctx) for target in targets):
             return "This command deletes files.", []
-    local = _git_local(sub, rest, flags, folder)
+    # A git setting given for this one command may change what git takes for a branch or its upstream.
+    configured = any(word.text.upper().startswith("GIT_") for word in simple.assigns) or any(
+        arg.startswith(("-c", "--config-env")) for arg in args[:len(args) - len(rest) - 1])
+    # A program in front that adds names (xargs, parallel) leaves the line short of them. A feed
+    # counts only for the repository it was read in: no -C or other option before the subcommand.
+    words = [word.text for word in simple.words]
+    wrappers = words[:len(words) - len(args) - 1]
+    adds = any(os.path.basename(word) in ("xargs", "parallel") for word in wrappers)
+    fed = (args[:1] == ["branch"] and _merged_feed(line.pipe, wrappers, folder, ctx.policy.main)) if adds else None
+    local = _git_local(sub, rest, flags, folder, None if configured else ctx.policy.main, fed)
     if local:
         here = folder is not None and not shared and _temp_word(Word(text=str(folder), raw=str(folder)), line, ctx)
         if not here:
@@ -971,31 +1322,31 @@ def _inner(simple: Simple, before: str, line: _Line, ctx: _Context, reading: Rea
                      if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:] and index + 1 < len(args)), None)
         script = next((arg for arg in args if not arg.startswith(("-", "+"))), None)
         if code is not None:
-            _read(code, line.child(), ctx, reading, depth + 1, legacy=True)
+            _read(code, line.child(names=False), ctx, reading, depth + 1, legacy=True)
         elif script is not None and code is None:
             rest = args[args.index(script):]
             reading.texts += [" ".join(rest), *_program_texts(rest, line, ctx)]
         for body in bodies:
-            _read(body, line.child(), ctx, reading, depth + 1)
+            _read(body, line.child(names=False), ctx, reading, depth + 1)
         if code is None and script is None and _piped(before):
             reading.ask(_scan(ctx.text, ctx))  # the shell runs what the pipe gives it
     elif program == "eval":
-        _read(" ".join(args), line.child(), ctx, reading, depth + 1)
+        _read(" ".join(args), line.child(names=False), ctx, reading, depth + 1)
     elif program == "alias":
         for arg in args:
             if "=" in arg:
-                _read(arg.split("=", 1)[1], line.child(), ctx, reading, depth + 1)
+                _read(arg.split("=", 1)[1], line.child(names=False), ctx, reading, depth + 1)
     elif program in ("source", "."):
         reading.texts += [" ".join(args)]
     elif program == "find":
         for index, arg in enumerate(args):
             if arg in ("-exec", "-execdir", "-ok", "-okdir"):
                 end = next((later for later in range(index + 1, len(args)) if args[later] in (";", "+")), len(args))
-                _read(shlex.join(args[index + 1:end]), line.child(), ctx, reading, depth + 1)
+                _read(shlex.join(args[index + 1:end]), line.child(names=False), ctx, reading, depth + 1)
     if "env" in {os.path.basename(word) for word in words[:start]}:
         split = _flag(words, "-S") or _flag(words, "--split-string")
         if split:
-            _read(split, line.child(), ctx, reading, depth + 1)
+            _read(split, line.child(names=False), ctx, reading, depth + 1)
     base = re.sub(r"[\d.]+$", "", program)
     if base in INTERPRETERS or program in INTERPRETERS:
         codes = list(bodies)
@@ -1226,6 +1577,12 @@ def _git_safe(args: list[Word], line: _Line, ctx: _Context) -> bool:
 
 
 def _git_branch(rest: list[Word], folder: Path, line: _Line, ctx: _Context) -> bool:
+    """`branch` without delete, move, copy or force; or `-d` or `--delete`, with `-q`, of local
+    branches whose every commit the main line holds."""
+    texts = [word.text for word in rest]
+    if "-d" in texts or "--delete" in texts:
+        names = [text for text in texts if text not in ("-d", "--delete", "-q", "--quiet")]
+        return all(word.literal for word in rest) and _in_main(names, folder, ctx.policy.main)
     return _plain(rest, short="dDmMcCfe", long=("delete", "move", "copy", "force", "edit-description"), glob=False) is not None
 
 

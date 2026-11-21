@@ -548,7 +548,7 @@ to the host.
 | Tools that only read | `ls`, `cat`, `head`, `tail`, `wc`, `cut`, `diff`, `cmp`, `grep`, `tr`, `nl`, `comm`, `basename`, `dirname`, `realpath`, `readlink`, `stat`, `du`, `which`, the checksum tools, `pwd`, `echo`, `true`, `false`; `cd` to one folder (never zsh's `+N` stack forms); `sort` without `-o`, `uniq` with one file, `rg` without `--pre` or `-z`, `file` without `-C`, `date` without `-s`; `sed` that only prints (no `-i`, no script file, a print or a substitution without the `w` or `e` flag); `find` without `-delete`, `-exec`, `-ok` or `-fprint` |
 | Writes | `mkdir`, `touch` and every output redirection whose literal target lies in a temp folder, or in the project away from the protected and kept paths and the folders that hold them, and not under a folder made earlier in the same line; `/dev/null` and descriptor copies always. A target holding `#`, `^` or `~`, a glob under zsh's extended_glob, is never known |
 | Deletes | `rm` and `rmdir` whose every literal target lies in a temp folder, with no extended-glob character in it |
-| git, inside the project | Not in a repository nested in it, and not after a folder was made earlier in the line. `status`, `log`, `show`, `diff`, `rev-parse`, `rev-list`, `ls-files`, `ls-tree`, `blame`, `describe`, `shortlog`, `merge-base`, `cat-file`, `show-ref`, `grep`, `stash list` and `show`, `remote -v`; `branch` without delete, move, copy or force; `add`, not interactive; `commit` with its message, without `--amend`, `--no-verify` or an editor; `fetch` from a remote the repository names, with plain branch names, never a URL or `host:path`; `switch NAME` and `checkout NAME` of an existing local branch, or `switch -c NEW` and `checkout -b NEW` from a plain start point, and nothing else (no path, pathspec, glob or force); `merge --ff-only`; `worktree add` and `list`; and only `push [-u] REMOTE BRANCH`, of an existing local branch named plainly that is not `main`, `master` or the project's main under any name, to a remote the repository names with no push mapping or mirror configured. Options are matched exactly, never by an abbreviation git would accept; no `-c`, `--git-dir`, `--work-tree` or `GIT_*` variable |
+| git, inside the project | Not in a repository nested in it, and not after a folder was made earlier in the line. `status`, `log`, `show`, `diff`, `rev-parse`, `rev-list`, `ls-files`, `ls-tree`, `blame`, `describe`, `shortlog`, `merge-base`, `cat-file`, `show-ref`, `grep`, `stash list` and `show`, `remote -v`; `branch` without delete, move, copy or force, and `branch -d` or `--delete` (with `-q`) of local branches whose every commit the main line holds (below); `add`, not interactive; `commit` with its message, without `--amend`, `--no-verify` or an editor; `fetch` from a remote the repository names, with plain branch names, never a URL or `host:path`; `switch NAME` and `checkout NAME` of an existing local branch, or `switch -c NEW` and `checkout -b NEW` from a plain start point, and nothing else (no path, pathspec, glob or force); `merge --ff-only`; `worktree add` and `list`; and only `push [-u] REMOTE BRANCH`, of an existing local branch named plainly that is not `main`, `master` or the project's main under any name, to a remote the repository names with no push mapping or mirror configured. Options are matched exactly, never by an abbreviation git would accept; no `-c`, `--git-dir`, `--work-tree` or `GIT_*` variable |
 | `cd` | Always; where it moves the shell is followed only when proven (below) |
 
 Never on the list: an interpreter, a shell, a runner or a wrapper (`python`, `node`, `perl`,
@@ -563,19 +563,22 @@ project may still name an exact form under `allow`.
 | --- | --- |
 | The reader | Follows quotes, `$()` and backticks (each read in turn), here-documents, comments and every redirection form, zsh's included (`>`, `>>`, `>\|`, `>!`, `&>`, `&>>`, `&>!`, `>&!`, `>>&`, `>&FILE`, `<>`, …). It marks each word a variable, a glob, a brace list or a tilde will change, and refuses what it does not follow: a control or invisible character (a carriage return is part of a word to the shell), a redirection to a word starting with `!` or `\|`, any `${…}` but the plain `${NAME}`, zsh's `$~X` and its kin, arithmetic, `[[`, `case`, functions |
 | `cd` | Followed only for a bare `cd DIR` (with `-L` or `-P`): a literal folder that exists and can be entered, joined by `&&` to the commands after it, not after `\|\|`, not in a pipe, no CDPATH, and nothing before it in the line that changes files. A `..` is followed only with `-P`, since without it the shell reads `..` against the path as written, not past its links. Otherwise the folder is unknown: relative writes and deletes are never allowed, and the danger check reads them from the root and by file name |
+| Names | A value the line sets plainly, as `SP=/some/folder`, is put in for a later `${SP}`, or a `$SP` that ends there (the word's end, `/`, `.`, `-` or a quote: zsh reads `$SP:t` and `$SP[1,3]` on), in the same shell, a `$()` included: only first in the line or after `;`, a newline or `(`, never after `&&`, `\|\|` or a pipe (a newline after one goes on with the line), in the background, and only a value the shell neither splits nor globs. Code a new shell or `eval` runs (`bash -c`, a here-document, `find -exec`) is given no names and follows none it sets, since the outer shell may already have put its own values in. A prefix (`SP=x cmd`) or any other assignment makes its name unknown. A loop, a condition, a group, a builtin that sets names (`read`, `export`, `eval`, `source`, `printf -v`, …), a program named by a variable, IFS, a zsh subscript (`$NAME[…]`) or a named descriptor (`{NAME}>`) anywhere in the line turns this off. A name the shell sets, ties or reads itself is never read back, compared without case: `_`, `PATH` and zsh's `path`, `HOME`, `PWD`, `RANDOM`, every `GIT_*`, `BASH*`, `LC_*`, … An assignment is still not on the safe list: the host decides the call |
 | Paths | Made absolute past every link, and compared in one Unicode form (NFC), since a Mac takes the NFD spelling of a name for the same file, and without regard to case. A protected or kept pattern also covers each folder that holds it, so `mv .claude x` asks |
 | Text it cannot read | A command the reader refuses, or a shell reading a pipe, is searched as raw text for the danger words; found, it asks. In `ask` mode, a command the 0.2.0 reader could not read still asks, as it did |
 | The host's lists | Read in `allow-safe` from `.claude/settings.json`, `.claude/settings.local.json`, the user's settings (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) and the managed settings, with the host's meaning: `Bash(x)` is exact, `Bash(x:*)` and `Bash(x *)` are `x` alone or followed by more, `*` is any text. Each simple command is matched with its redirections left out. A file it cannot read, or an ask or deny list that is not a list of text, gives no allow, and `themis doctor` says so. A host rule for edits leaves every edit to the host |
 | Guarded in `allow-safe` | Besides the protected paths: `.claude/**` and `.mcp.json` (the host's settings and the servers it starts), `.githooks/**`, `.husky/**`, `.pre-commit-config.yaml` and lefthook's files, the folder `core.hooksPath` names (with its parent, for a manager's `_` folder), `.themis/**` (the hook's own state), every `.git` file or folder at any depth, and in the user's home the host's folder and `~/.claude.json`. Also what the hook itself runs from, where a `.pth` file, a changed lock or a replaced script runs code at the next hook call: the interpreter's folders and the themis package wherever they are, `.venv/**`, `venv/**`, any `site-packages`, `pyproject.toml`, `uv.lock`, `uv.toml`, `requirements*.txt`, `.python-version`, `package.json`, `package-lock.json`, `node_modules/.bin/**` and a `sitecustomize.py` |
 
 **What it cannot protect.** `allow-safe` is a best-effort allow list, not a sandbox. It reads a
-command as text, ahead of the shell, and two readings of one line can differ; two reviews found
+command as text, ahead of the shell, and two readings of one line can differ; three reviews found
 lines where they did, each now refused and kept as a test, and more may exist. It does not confine
 what an allowed command then does: the commands on the list are chosen because what they do is
 small and known. So the answer it cannot give is the safe one: whatever it does not fully
 understand gets no answer, and the host's own permission mode, or its automatic check, still sees
 and decides it. Known gaps: aliases and functions from the user's own shell are not seen, so a
-safe name may run something else. An `allow` entry for a test runner lets the agent run whatever
+safe name may run something else. In the cleanup after a merge, xargs splits git's own lines into
+words, so with HEAD detached a word of `(HEAD detached at …)` reaches `branch -d`, where only git's
+check stands. An `allow` entry for a test runner lets the agent run whatever
 code it writes into the tests. A deny or ask pattern is matched only against the commands the hook
 reads; one it cannot read is never allowed, and the host's own lists then apply. The mode takes
 effect as soon as `themis.toml` is saved; switching to `allow-safe`, adding a `temp` folder or an
@@ -585,14 +588,31 @@ grant.
 Dangers, judged in both modes: deletes (`rm`, `rmdir`, `unlink`, `shred`, `git rm`, `git clean`,
 `git worktree remove`, `find -delete`, `rsync --delete`, also behind `sudo`, `timeout`, `xargs` or
 `uv run`); work thrown away (`git reset --hard`, `git stash drop` or `clear`, a checkout of paths,
-of a glob or a `:` pathspec, or by force, a `git restore` of the working tree, a branch deleted or
-overwritten); `--no-verify`, and
+of a glob or a `:` pathspec, or by force, a `git restore` of the working tree, a branch deleted by
+force or of a remote (`-D`, `--force`, `-r`) or overwritten; a plain `branch -d` is not when the
+main line holds every commit of each branch it names, as the hook checks itself with `git
+merge-base --is-ancestor`, since git's own check trusts an upstream, which may be the branch
+itself, or a detached HEAD; nor the cleanup after a merge, `git branch --merged MAIN | grep … |
+xargs git branch -d`, whose names git lists from the main line as the command runs, through grep
+filters alone; names a program adds from anywhere else, or a setting given with `-c`, still ask);
+`--no-verify`, and
 a `git -c` that runs a program or moves the hooks; remote shells and copies (`ssh`, `scp`, `sftp`,
 `rsync` to a host, `rclone`, …); uploads (`curl` or `wget` sending data, or a method other than
 GET, to a host that is not local) and deletes through a cloud tool; owner-only Themis commands,
 however launched; writes, moves and copies onto a protected or kept path, or into a folder holding
 one (every redirection, `dd of=`, `sed -i`, `perl -pi`, `cp`, `mv`, `rsync`, an archive unpacked);
-code given to an interpreter on its command line that deletes or runs programs.
+code given to an interpreter on its command line that deletes or runs programs. A `cp` or `rsync`
+whose every option is on its list of harmless ones (`-R`, `-a`, `-p`, `-v`, `--exclude`, `--delete`,
+…, matched exactly) and comes before its files only reads what it copies, so copying a folder or a
+protected file out of the project asks nothing. Any other copy has its sources judged as written,
+as before: one that links to or removes them (`ln`, `cp -l` or `-s`, `rsync --remove-source-files`
+or `--remove-sent-files`, which also ask as deletes, `--link-dest`), writes a backup or a log, takes
+an abbreviated or unknown option, has a variable or a glob among its words, or an option after its
+files; and `install`, whose BSD form writes a log (`-M`) or a backup (`-B`) elsewhere. rsync's own
+places (`--log-file`, `--backup-dir`, `--temp-dir`, `--partial-dir`, a batch file, `--link-dest`)
+are judged as writes; an option's value is never taken for one of its files, a `-t` after `--` is a
+file, and an rsync `--delete` with one file asks, since rsync may take the folder it runs in for
+the other end.
 
 `themis hooks install` and `themis doctor` print the mode; `agents/hooks-installed` names it when
 the hook before a tool call is missing.

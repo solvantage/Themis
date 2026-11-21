@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 #: Operators that end a simple command, longest first.
@@ -100,9 +101,20 @@ def parse(text: str) -> list[Simple | str]:
     return reader.read(stop=False)
 
 
+def read_word(text: str, known: Mapping[str, str]) -> Word:
+    """One word, as `parse` reads it, with each `$NAME` or `${NAME}` that `known` holds put in as its
+    value. The caller vouches that each value is one word the shell neither splits nor globs."""
+    reader = _Reader(text, known)
+    word = reader._word()
+    if reader.i != len(text):
+        raise Unreadable("more than one word")
+    return word
+
+
 class _Reader:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, known: Mapping[str, str] | None = None) -> None:
         self.s, self.i = text, 0
+        self.known = known or {}  # values to put in for `$NAME`, as `read_word` is given them
         self.pending: list[tuple[Redirect, str, bool]] = []  # here-documents whose text follows the next newline
 
     # -- the line -------------------------------------------------------------------------------
@@ -325,6 +337,13 @@ class _Reader:
         else:
             out.append("$")
             self.i = i + 1
+            return
+        name = s[start + 1:self.i].removeprefix("{").removesuffix("}")
+        # zsh reads on past a bare $NAME: `:t` and `:h` modify it, `[1,3]` slices it, and a letter
+        # outside ASCII may be part of the name. Only ${NAME}, or $NAME before an end, gets its value.
+        ends = after == "{" or self.i >= len(s) or s[self.i] in "/.-\"'"
+        if name in self.known and ends:
+            out.append(self.known[name])
             return
         if quoted:
             word.quoted = True
