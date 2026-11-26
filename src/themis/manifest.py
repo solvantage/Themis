@@ -36,6 +36,13 @@ COMMON_RULE_KEYS = {
 
 PLANT = {"file": Required(str), "append": str, "find": str, "replace": str, "content": str, "delete": bool,
          "stage": bool}
+#: The timeline gate's table: the page and heading its table sits under, and the project's states.
+#: `cites` lists what a state's row must cite: "pr" for a bare #N, or path patterns.
+TIMELINE = {
+    "page": Required(str),
+    "heading": Required(str),
+    "states": Required({"*": {"started": bool, "finished": bool, "names": Choice("rows", "until"), "cites": [str]}}),
+}
 EXTERNAL = {
     "id": Required(str),
     "description": Required(str),
@@ -66,6 +73,7 @@ CORE = {
     "adapters": {"*": {"*": ANY}},
     "agents": {"host": Choice("claude"), "instructions": str, "git_hooks": str, "pretool": Choice(*PRETOOL_MODES),
                "temp": [str], "keep": [str], "ask": [str], "deny": [str], "allow": [str]},
+    "timeline": TIMELINE,
 }
 
 

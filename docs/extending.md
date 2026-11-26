@@ -61,6 +61,9 @@ tightening; any change to `[homes]` is a weakening, since it moves where records
 agent hook's keys under `[agents]` carry directions as a pack's would: `pretool = "allow-safe"`, a
 new `temp` folder and a new `allow` pattern are weakenings, a new `keep` path or `ask` or `deny`
 pattern a tightening (DESIGN.md, section 13). A rule's `since` set for the first time stays a weakening.
+`[timeline]` is read the same way: a new table is a tightening, its states among it; a state added
+to a table that was there is a weakening and one removed a tightening; a state's `names` or `cites`
+set for the first time is a tightening, and any later change inside a state a weakening.
 
 The rules that read a project's pages and folders take path patterns:
 
@@ -81,6 +84,17 @@ pages = ["docs/**/*.md"]                    # pages a generator stamped with a h
 
 [rules."docs/no-bare-dollar-pairs"]
 pages = ["**/*.md"]
+
+[timeline]                                  # the timeline gate: the table under this heading
+page = "plans/README.md"
+heading = "Timeline"
+
+[timeline.states]                           # the only states a row may be in
+Planned = { started = false }               # not started: its Status cell needs no day
+Waits = { started = false, names = "rows" } # its Status cell names the rows: on 1, 2
+"Under way" = {}                            # started: its Status cell gives the day
+Paused = { names = "until" }                # until a day, rows or a person's go
+Done = { finished = true, cites = ["pr", "docs/**"] }   # a merged #12, or a record under docs/
 ```
 
 ### Standards
