@@ -221,7 +221,7 @@ Twenty-eight rules in seven gates, beside the core's.
 | Rule | The promise | Parameters |
 | --- | --- | --- |
 | `live/off-by-default` | Every live-trading switch holds its safe value in the source, unless the owner granted that file its flip. | `switches`, `absent` |
-| `live/money-gated` | A row that commits money names the sealed run it waits on, and starts only after that run's last decision is a pass. | `words` |
+| `live/money-gated` | A row that commits money names the sealed run it waits on, and starts only after that run's last decision is a pass. | `words`, `zone` |
 
 ### Gate: forward — a live run is held to a replay of the same dates
 
@@ -292,9 +292,11 @@ What the rules read, in more detail:
   but `–`. Its Gate is a link to a forward run's seal, or `row N` for the row that will seal it:
   row N must exist and not be finished, and its run is the forward seal row N's Status links once
   it is sealed. A started row gives its day. On that day, the last decision of the run (by
-  `decided_at`, on or before the day) must be a pass, or a week the owner overruled with a
-  `forward` grant given by then. A started row gated on a row that has sealed nothing yet fails; a
-  decision whose time cannot be read is refused, and the row is not judged.
+  `decided_at`, read in `zone`, on or before the day) must be a pass, or a week the owner
+  overruled with a `forward` grant for that week, whenever given. A decision issued again is dated
+  anew, so a row that started on it then reads the week before, until the owner overrules that
+  week. A started row gated on a row that has sealed nothing yet fails; a decision whose time cannot
+  be read, or a `zone` that is no time zone, is refused, and the row is not judged.
 - **`scorecard/rendering`.** It reads every Markdown page in a study with the core's reader, the
   one `docs/no-bare-dollar-pairs` uses: a sign in a code span, a fence, an HTML block or a link
   target is not prose, and a fence closes only as CommonMark says. A project that turns on the
@@ -457,6 +459,7 @@ Everything here belongs to the project.
 | `live/off-by-default` | `switches` | Each live-trading switch: `files`, `pattern` with one capture group, and its `safe` value |
 | | `absent` | `refuse` (the default: a selected file must hold the switch) or `skip` |
 | `live/money-gated` | `words` | The words that mark a timeline row's task as one that commits money; `deposit`, `bought` and `fee` when unset |
+| | `zone` | The time zone the timeline's days are in, an IANA name such as `Asia/Bangkok`; unset, each time is read in its own UTC offset |
 
 ```toml
 [trading.windows.train]

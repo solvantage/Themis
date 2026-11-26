@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import posixpath
 import re
+import zoneinfo
 from typing import TYPE_CHECKING, Any
 
 from themis import checkpoint, timeline, work
 from themis.gates import timeline as timeline_gate
 from themis.grants import find_grant, to_toml
+from themis.manifest import MANIFEST_FILE
 from themis.packs.trading import forward, units
 from themis.rule import Context, Param, proof, rule
 from themis.schema import Choice, Required
@@ -208,11 +210,14 @@ def _seals(ctx: Context) -> dict[str, str]:
             for seal in work.inside(unit, files, units.SEAL)[:1]}
 
 
-def _on_or_before(value: Any, day: Any) -> bool:
-    # shortcut: a time's day is read in its own offset (UTC, as themis decide and grant write it), and the row's day
-    # in the page's; they can be a day apart near midnight. Upgrade with a time zone under [timeline] if that bites.
+ZONE = Param("zone", str, None, None, "the time zone the timeline's days are in, an IANA name such as Asia/Bangkok; "
+                                      "unset, each time is read in its own UTC offset")
+
+
+def _on_or_before(value: Any, day: Any, zone: zoneinfo.ZoneInfo | None) -> bool:
+    """True when the time falls on or before the day, read in the page's zone."""
     found = forward.moment(value)
-    return found is not None and found.date() <= day
+    return found is not None and (found.astimezone(zone) if zone else found).date() <= day
 
 
 @rule(
@@ -220,7 +225,7 @@ def _on_or_before(value: Any, day: Any) -> bool:
     "A row that commits money names the sealed run it waits on, and starts only after that run's last decision is "
     "a pass.",
     pack="trading",
-    params=(WORDS,),
+    params=(WORDS, ZONE),
     learned="A prop firm's account was to be bought \"after the demo months pass\", and only the words of its "
             "timeline row held it to that.",
 )
@@ -229,6 +234,13 @@ def money_gated(ctx: Context) -> None:
     if opened is None:
         return
     page, states, rows, known = opened
+    named = ctx.param("zone")
+    try:
+        zone = None if named is None else zoneinfo.ZoneInfo(named)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        ctx.refuse(f"zone, {named!r}, is not a time zone this machine knows", where=MANIFEST_FILE,
+                   fix="write an IANA name, such as Asia/Bangkok, or unset zone")
+        return
     folder, seals = posixpath.dirname(page), _seals(ctx)
     numbered: dict[str, timeline.Row] = {}
     for row in rows:
@@ -294,7 +306,7 @@ def money_gated(ctx: Context) -> None:
                         ctx.refuse(f"the decision's decided_at, {record.get('decided_at')!r}, is not a time with its "
                                    "UTC offset, so the run's last decision cannot be read", where=record.path,
                                    fix="issue the decision again with themis decide")
-                    elif _on_or_before(record.get("decided_at"), row.day):
+                    elif _on_or_before(record.get("decided_at"), row.day, zone):
                         weekly.append((forward.moment(record.get("decided_at")), subject, record))
             if undated:
                 continue  # any of them could be the last: the row is not judged on the rest
@@ -306,9 +318,8 @@ def money_gated(ctx: Context) -> None:
             if last.get("verdict") == "pass":
                 continue
             grants = ctx.records("grant") if grants is None else grants
-            if find_grant([held for held in grants if _on_or_before(held.get("granted_at"), row.day)],
-                          forward.ACTION, subject) is not None:
-                continue  # the owner overruled that week, before the row started
+            if find_grant(grants, forward.ACTION, subject) is not None:
+                continue  # the owner overruled that week; a grant counts whenever given, as forward/match reads it
             week = subject.rsplit("/", 1)[-1].replace("-", " ", 1)
             say(f"started on {row.day.isoformat()}, and the last decision of {study} by then, for {week}, is "
                 f"{last.get('decision')}: not a pass, and no {forward.ACTION} grant made it one",
@@ -407,11 +418,54 @@ def _(world: World) -> None:
     _money(world, swap=DEPOSITED, decided=forward.EVERY, changes=forward.RISKY, granted=(48,))
 
 
-@proof("live/money-gated", "the owner's grant given after the row started", expect="fail",
-       contains="for week 2026-49, is stop")
+@proof("live/money-gated", "the owner's grant given after the row started still overrules the week", expect="pass")
 def _(world: World) -> None:
     _money(world, swap=DEPOSITED, decided=forward.EVERY, changes=forward.RISKY)
     _overruled(world, 49, "2026-12-10T09:00:00+00:00")
+
+
+REISSUED = {49: {"decided_at": "2026-12-20T03:00:00+00:00"}}  # week 49's pass, issued again on 20 Dec
+
+
+@proof("live/money-gated", "a decision issued again is dated anew: the row's day then reads the week before",
+       expect="fail", contains="row 3 started on 2026-12-07, and the last decision of work/fwd by then, for week "
+                               "2026-48, is defer")
+def _(world: World) -> None:
+    _money(world, swap=DEPOSITED, decided=forward.EVERY, typed=REISSUED)
+
+
+@proof("live/money-gated", "the pass a row started on, issued again later, and the owner's grant for the week before",
+       expect="pass")
+def _(world: World) -> None:
+    _money(world, swap=DEPOSITED, decided=forward.EVERY, typed=REISSUED)
+    _overruled(world, 48, "2026-12-21T09:00:00+00:00")
+
+
+def _zone(name: str = "Asia/Bangkok") -> str:
+    return f'\n    [rules."live/money-gated"]\n    zone = "{name}"\n'
+
+
+SUNDAY = ("**Planned**: its preset ready", "**Under way** 6 Dec 2026")  # week 49 is decided Mon 7 Dec 06:00 in BKK
+
+
+@proof("live/money-gated", "in the page's zone, a pass decided Sunday 23:00 UTC is Monday's: a row started Sunday "
+       "did not start on it", expect="fail",
+       contains="row 3 started on 2026-12-06, and the last decision of work/fwd by then, for week 2026-48, is defer")
+def _(world: World) -> None:
+    _money(world, swap=SUNDAY, decided=forward.EVERY, setup=_zone())
+
+
+@proof("live/money-gated", "in the page's zone, a stop decided Sunday 23:00 UTC lands Monday: a row started Sunday on "
+       "a pass holds", expect="pass")
+def _(world: World) -> None:
+    _money(world, swap=SUNDAY, decided=forward.EVERY, changes={49: {"risk.day-loss": 0.6}}, owned={48: "pass"},
+           granted=(48,), setup=_zone())
+
+
+@proof("live/money-gated", "a zone that is no time zone", expect="refuse",
+       contains="zone, 'Mars/Olympus', is not a time zone")
+def _(world: World) -> None:
+    _money(world, swap=DEPOSITED, decided=forward.EVERY, setup=_zone("Mars/Olympus"))
 
 
 @proof("live/money-gated", "a Gate on a finished row", expect="fail",
