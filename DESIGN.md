@@ -205,7 +205,7 @@ rules afterwards.
 
 ## 8. The core rule catalogue
 
-Fifty-one rules in eighteen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
+Fifty-five rules in eighteen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
 answer whenever the evidence is missing, unreadable or empty.** A gate that inspected nothing
 never passes.
 
@@ -313,6 +313,10 @@ standard holds, each gate's calibration row and its `--gate` name, and every com
 | Rule | The promise | Supplied by the pack or project |
 | --- | --- | --- |
 | `timeline/shape` | Each row has a start, a state from the project's list, a person and a plan, and no two rows share a number. | The page, its heading and the states |
+| `timeline/state-cited` | A row whose state claims a result cites the record that state requires, and the record is on the main line. | What each state cites |
+| `timeline/not-stale` | No row is still unstarted after its start date. | Which states are unstarted; the day of grace |
+| `timeline/waits-resolve` | A stopped row names what restarts it, and each row it waits on exists, is not finished and is not paused. | Which states wait, stop or are finished |
+| `timeline/plans-listed` | Every open plan is linked from a row. | Where open plans live, and those closed in place |
 
 The timeline is one table written by hand: the first under one heading of one page whose header
 names When, Task, Status, Who and Plan. `[timeline]` names the page, the heading and the
@@ -323,6 +327,15 @@ started state then its day. A state is `started` (the default) or not, `finished
 `names` the `rows` a wait is on, or what restarts it, `until`; and it `cites` what its row must
 cite: `pr` for a bare `#12`, or path patterns. A new `[timeline]` table is a tightening. A state
 added to it later is a weakening, and so is any change inside a state but its first setting.
+
+A bare `#12` is a pull request of this repository, merged when a commit the main line reaches is
+`Merge pull request #12`, or a first-parent commit of the main line ends `(#12)`, as a squash
+merge does; another repository's is written as a link and kept apart. A cited path must be in the
+main line's tree, as a file or a folder that holds one. A day, a month or a span
+is stale once its last day is more than `grace_days` (1) behind; `today` fixes the day for a
+proof. A wait is a state's `on` rows, a stopped state's `until` rows, and an unstarted row's
+`After` rows. `plans-listed` reads every link in a row, against the files its `plans` patterns
+match, less its `closed` list.
 
 ### Gate: registry — past lessons stay findable
 

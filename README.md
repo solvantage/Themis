@@ -8,7 +8,7 @@ follows one sealed path, and every guard is proven able to say no.
 It is a generic core. A field plugs in as a **pack**; a project plugs in as a **manifest**. The
 core names no field and no project, and a test keeps it that way.
 
-**Status:** built. The engine, 51 core rules in 18 gates, the agent and git hooks, guarded
+**Status:** built. The engine, 55 core rules in 18 gates, the agent and git hooks, guarded
 commands (`themis act`), the pack interface, the trading pack (27 rules in 7 gates), the marketing
 content pack (27 rules in 6 gates) and a wrapper for Node check runners all exist,
 and every rule ships proofs that it can fail. A forward run, where sealed settings trade live, is

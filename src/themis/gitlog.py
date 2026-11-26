@@ -8,10 +8,13 @@ chain of the main branch: one commit for each merge.
 from __future__ import annotations
 
 import functools
+import re
 import subprocess
 from pathlib import Path
 
 MAIN_CANDIDATES = ("origin/main", "main", "origin/master", "master")
+#: A commit subject that names the pull request it merged: a merge commit, or a squash merge's `(#12)`.
+PULL_REQUEST = re.compile(r"\(#(\d+)\)\s*$|^Merge pull request #(\d+)")
 
 
 class Git:
@@ -134,6 +137,19 @@ class Git:
         """Every commit of the main line, oldest first: an `arrivals` position indexes this list."""
         out = self.run("rev-list", "--first-parent", "--reverse", ref)
         return (out or "").split()
+
+    @functools.lru_cache(maxsize=None)
+    def pull_requests(self, ref: str) -> frozenset[int]:
+        """The numbers of the pull requests merged into this line. A `Merge pull request #12` subject
+        counts on any commit the line reaches, since a stacked pull request merges inside another; a
+        squash merge's `(#12)` only on the line's own first-parent commits, since a branch's commit
+        may end its subject so without merging anything."""
+        def hits(*flags: str) -> list[re.Match[str]]:
+            subjects = (self.run("log", *flags, "--format=%s", ref) or "").splitlines()
+            return [hit for hit in map(PULL_REQUEST.search, subjects) if hit]
+
+        merges = {int(hit[2]) for hit in hits() if hit[2]}
+        return frozenset(merges | {int(hit[1]) for hit in hits("--first-parent") if hit[1]})
 
     @functools.lru_cache(maxsize=None)
     def added_by(self, path: str) -> str | None:

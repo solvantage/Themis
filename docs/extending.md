@@ -90,11 +90,18 @@ page = "plans/README.md"
 heading = "Timeline"
 
 [timeline.states]                           # the only states a row may be in
-Planned = { started = false }               # not started: its Status cell needs no day
+Planned = { started = false }               # not started: no day; stale once its start has passed
 Waits = { started = false, names = "rows" } # its Status cell names the rows: on 1, 2
 "Under way" = {}                            # started: its Status cell gives the day
 Paused = { names = "until" }                # until a day, rows or a person's go
 Done = { finished = true, cites = ["pr", "docs/**"] }   # a merged #12, or a record under docs/
+
+[rules."timeline/not-stale"]
+grace_days = 1                              # the default: a row may read Planned the day after its start
+
+[rules."timeline/plans-listed"]
+plans = ["plans/active/*.md"]               # each open plan must be linked from a row
+closed = ["plans/active/old-explainer.md"]  # but one closed in place
 ```
 
 ### Standards
