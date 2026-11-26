@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from themis import configguard, engine, gates, manifest, timeline
+from themis import configguard, engine, gates, manifest, pack, timeline
 from themis.gates.timeline import PAGE, STATES, _page
 from themis.proofs import World
 from themis.rule import RULES
@@ -126,3 +126,12 @@ def _without(name: str) -> dict:
 def test_each_change_to_the_timeline_table_is_classified(old: dict, new: dict, kind: str) -> None:
     kinds = {change.kind for change in configguard.classify(old, new)}
     assert kinds == {kind}, configguard.classify(old, new)
+
+
+def test_a_new_allow_table_inside_a_table_in_force_is_still_a_weakening() -> None:
+    """Only a new [timeline] as a whole is read as a tightening. A table of entries a pack declares
+    smaller (it allows), first written in a new sub-table of a table already in force, lets more through."""
+    keys = {"gates.allow": pack.Key("smaller")}
+    old, new = {"work": "research/*"}, {"work": "research/*", "gates": {"allow": {"quick": {"looks": 2}}}}
+    changes = configguard._table_changes("[field]", old, new, keys)
+    assert {change.kind for change in changes} == {"weakening"}, changes

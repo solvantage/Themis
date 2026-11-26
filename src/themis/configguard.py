@@ -41,7 +41,8 @@ AGENT_KEYS = {
     "deny": pack.Key("larger", []),
 }
 #: Which way the keys under [timeline] move the checking. A state added lets a row pass that failed,
-#: so the states are a table that allows: a new one is a weakening, unless [timeline] itself is new.
+#: so the states are a table that allows: a new one is a weakening. A new [timeline] as a whole is a
+#: tightening (classify reads it so), since nothing reads a timeline before its table is written.
 #: Inside a state nothing has a direction: what it requires, first set, is a tightening, and any later
 #: change a weakening.
 TIMELINE_KEYS = {
@@ -322,6 +323,10 @@ def classify(old: dict[str, Any], new: dict[str, Any], root: Path | None = None)
     keys = {"agents": AGENT_KEYS, "timeline": TIMELINE_KEYS,
             **{loaded.name: loaded.keys for loaded in old_packs + new_packs}}
     for table in sorted((set(old) | set(new)) - classified):
+        if table == "timeline" and old.get(table) is None and new.get(table) is not None:
+            # Nothing reads a timeline before its table is written: all of it, the states among it, is new checking.
+            found.append(Change("tightening", "[timeline] added"))
+            continue
         found += _table_changes(f"[{table}]", old.get(table), new.get(table), keys.get(table, {}))
     return found
 
@@ -340,18 +345,15 @@ def _declared(keys: dict[str, pack.Key], path: tuple[str, ...]) -> pack.Key | No
 
 
 def _declared_change(where: str, old: Any, new: Any, key: pack.Key, keys: dict[str, pack.Key],
-                     path: tuple[str, ...], fresh: bool = False) -> list[Change]:
-    """A change to a key whose pack states its direction and its default. `fresh`: the table that
-    holds it is new."""
+                     path: tuple[str, ...]) -> list[Change]:
+    """A change to a key whose pack states its direction and its default."""
     if key.stricter in ("larger", "smaller") and (isinstance(old, dict) or isinstance(new, dict)):
         # A table of entries, such as the windows: a new entry adds a check whatever it holds (or,
         # when smaller is stricter, lets more through), and an entry on both sides is read inside.
-        # In a table that is itself new, every entry is part of what the new table adds.
         old, new = old or {}, new or {}
         if not isinstance(old, dict) or not isinstance(new, dict):
             return [Change("weakening", f"{where} changed, and its direction cannot be classified")]
-        larger = key.stricter == "larger" or fresh
-        added, removed = ("tightening", "weakening") if larger else ("weakening", "tightening")
+        added, removed = ("tightening", "weakening") if key.stricter == "larger" else ("weakening", "tightening")
         found = []
         for name in sorted(set(old) | set(new), key=str):
             place = _entry(where, str(name))
@@ -403,7 +405,7 @@ def _table_changes(where: str, old: Any, new: Any, keys: dict[str, pack.Key] | N
         old, new = old or [], new or []  # no list of skips is an empty one
     declared = _declared(keys, path) if path else None
     if declared is not None:
-        return _declared_change(where, old, new, declared, keys, path, fresh)
+        return _declared_change(where, old, new, declared, keys, path)
     if old is None:
         if isinstance(new, dict):
             inside = _table_changes(where, {}, new, keys, path, fresh=True)
