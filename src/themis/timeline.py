@@ -154,7 +154,7 @@ def _when(cell: str) -> tuple[When | None, str | None]:
     if not text:
         return None, "the When cell is blank"
     near = text.startswith("~")  # a day read as its month
-    text = text[1:].lstrip() if near else text
+    text, mark = (text[1:].lstrip(), "~") if near else (text, "")
     after = None if near else _AFTER.match(text)
     if after:
         return When(after.group(0), after=rows_named(after["rows"])), None
@@ -163,16 +163,16 @@ def _when(cell: str) -> tuple[When | None, str | None]:
         if problem:
             return None, problem
         assert day is not None
-        return When(text[:used], by=_end_of_month(day.year, day.month) if near else day), None
+        return When(mark + text[:used], by=_end_of_month(day.year, day.month) if near else day), None
     found = _MONTHS.match(text)
     first = _named(found["month"], MONTHS) if found else None
     if found and first is not None:
         if found["to"]:
             last, year = _named(found["to"], MONTHS), int(found["to_year"])
             if last is not None:
-                return When(found.group(0), by=_end_of_month(year, last + 1)), None
+                return When(mark + found.group(0), by=_end_of_month(year, last + 1)), None
         elif found["year"]:
-            return When(found.group(0), by=_end_of_month(int(found["year"]), first + 1)), None
+            return When(mark + found.group(0), by=_end_of_month(int(found["year"]), first + 1)), None
         else:
             return None, f"the month {found.group(0)} has no year"
     shown = text if len(text) <= 40 else text[:39] + "…"

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
 from themis import receipts
-from themis.gitlog import Git
+from themis.gitlog import PULL_REQUEST, Git
 
 if TYPE_CHECKING:
     from themis.manifest import Manifest
@@ -46,7 +46,6 @@ _BULLET = re.compile(r"[-*+]\s+(?![-*_\s]*$)")  # a list item, not a rule drawn 
 _FENCE = ("```", "~~~")
 _LINK = re.compile(r"(?<!!)\[[^\]]*\]\(\s*(?:<([^>]*)>|([^)\s]+))")  # [text](target) or [text](<a target>)
 _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
-_PULL_REQUEST = re.compile(r"\(#(\d+)\)\s*$|^Merge pull request #(\d+)")
 
 
 @dataclass(frozen=True)
@@ -215,7 +214,7 @@ def facts(root: Path, manifest: Manifest, *, now: dt.datetime | None = None) -> 
     if main:
         commit = (git.run("rev-parse", "--short=8", f"{main}^{{commit}}") or "").strip() or None
         tree = (git.run("rev-parse", "--verify", "--quiet", f"{main}^{{tree}}") or "").strip() or None
-        named = _PULL_REQUEST.search((git.run("show", "-s", "--format=%s", main) or "").strip())
+        named = PULL_REQUEST.search((git.run("show", "-s", "--format=%s", main) or "").strip())
         number = int(named[1] or named[2]) if named else None
     receipt = receipts.suite_for_tree(root, tree) if tree else None
     return {
