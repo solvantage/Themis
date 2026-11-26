@@ -205,7 +205,7 @@ rules afterwards.
 
 ## 8. The core rule catalogue
 
-Fifty rules in seventeen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
+Fifty-one rules in eighteen gates. Every rule returns PASS, FAIL or REFUSE. **REFUSE is the
 answer whenever the evidence is missing, unreadable or empty.** A gate that inspected nothing
 never passes.
 
@@ -307,6 +307,22 @@ standard holds, each gate's calibration row and its `--gate` name, and every com
 | `checkpoint/git-true` | The commit named in the headline exists and is on the main line. | — |
 | `checkpoint/suite-receipt` | The suite count cites a receipt for that commit, or is labelled unverified. | — |
 | `checkpoint/pointers` | Each standing trap and each closed decision points at its home record. | — |
+
+### Gate: timeline — the plan's dates and states are read, not trusted
+
+| Rule | The promise | Supplied by the pack or project |
+| --- | --- | --- |
+| `timeline/shape` | Each row has a start, a state from the project's list, a person and a plan, and no two rows share a number. | The page, its heading and the states |
+
+The timeline is one table written by hand: the first under one heading of one page whose header
+names When, Task, Status, Who and Plan. `[timeline]` names the page, the heading and the
+project's states; `themis.timeline` reads it. Only the head of a cell is read. When holds a day
+with its year (a weekday, when written, is that day's), a month, a span of months, or `After 1,
+2`; `~` reads a day as its month. Task holds its number first; Status a state in bold, and a
+started state then its day. A state is `started` (the default) or not, `finished` or not; it
+`names` the `rows` a wait is on, or what restarts it, `until`; and it `cites` what its row must
+cite: `pr` for a bare `#12`, or path patterns. A new `[timeline]` table is a tightening. A state
+added to it later is a weakening, and so is any change inside a state but its first setting.
 
 ### Gate: registry — past lessons stay findable
 
@@ -774,7 +790,8 @@ Themis/
 │   ├── act.py            a guarded command, run once on an unspent grant
 │   ├── checkpoint.py     the handoff; reporters.py, pytest_plugin.py, gitlog.py, paths.py
 │   ├── markdown.py       which lines of a page are prose, as CommonMark reads them
-│   ├── gates/            the core's seventeen gates
+│   ├── timeline.py       the rows of a timeline written by hand
+│   ├── gates/            the core's eighteen gates
 │   ├── pack/             the pack interface and the pack test kit
 │   └── packs/
 │       ├── trading/      the trading pack

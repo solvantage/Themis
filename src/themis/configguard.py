@@ -40,6 +40,20 @@ AGENT_KEYS = {
     "ask": pack.Key("larger", []),
     "deny": pack.Key("larger", []),
 }
+#: Which way the keys under [timeline] move the checking. A state added lets a row pass that failed,
+#: so the states are a table that allows: a new one is a weakening. A new [timeline] as a whole is a
+#: tightening (classify reads it so), since nothing reads a timeline before its table is written.
+#: Inside a state nothing has a direction: what it requires, first set, is a tightening, and any later
+#: change a weakening.
+TIMELINE_KEYS = {
+    "page": pack.Key(),
+    "heading": pack.Key(),
+    "states": pack.Key("smaller"),
+    "states.*.started": pack.Key(None, True),
+    "states.*.finished": pack.Key(None, False),
+    "states.*.names": pack.Key(),
+    "states.*.cites": pack.Key(),
+}
 
 
 @dataclass(frozen=True)
@@ -306,8 +320,13 @@ def classify(old: dict[str, Any], new: dict[str, Any], root: Path | None = None)
         found.append(Change(protected, "config.protected changed"))
 
     classified = {"rules", "checks", "roles", "project", "config"}
-    keys = {"agents": AGENT_KEYS, **{loaded.name: loaded.keys for loaded in old_packs + new_packs}}
+    keys = {"agents": AGENT_KEYS, "timeline": TIMELINE_KEYS,
+            **{loaded.name: loaded.keys for loaded in old_packs + new_packs}}
     for table in sorted((set(old) | set(new)) - classified):
+        if table == "timeline" and old.get(table) is None and new.get(table) is not None:
+            # Nothing reads a timeline before its table is written: all of it, the states among it, is new checking.
+            found.append(Change("tightening", "[timeline] added"))
+            continue
         found += _table_changes(f"[{table}]", old.get(table), new.get(table), keys.get(table, {}))
     return found
 
