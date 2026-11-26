@@ -337,6 +337,10 @@ proof. A wait is a state's `on` rows, a stopped state's `until` rows, and an uns
 `After` rows. `plans-listed` reads every link in a row, against the files its `plans` patterns
 match, less its `closed` list.
 
+The one timeline rule that reads a trading record is the trading pack's: `live/money-gated` holds
+a row that commits money to the Gate column and to its forward run's weekly decisions
+([docs/packs/trading.md](docs/packs/trading.md)).
+
 ### Gate: registry — past lessons stay findable
 
 | Rule | The promise | Supplied by the pack or project |
