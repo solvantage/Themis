@@ -418,6 +418,7 @@ def state_cited(ctx: Context) -> None:
         return
     merged = ctx.git.pull_requests(main)
     held = set((ctx.git.run("ls-tree", "-r", "-z", "--name-only", main) or "").split("\0"))
+    held |= {name[:at] for name in held for at, char in enumerate(name) if char == "/"}  # each folder a file is in
     for row, state in known:
         cites = state.get("cites") or []
         patterns = [cite for cite in cites if cite != "pr"]
@@ -469,6 +470,22 @@ def _(world: World) -> None:
        contains="row 1 cites #9999, which is not merged on the main line")
 def _(world: World) -> None:
     _recorded(world, swap=("#12, [the other", "#9999, [the other"))
+
+
+@proof("timeline/state-cited", "a branch commit whose subject ends (#9999) is not a merge of #9999", expect="fail",
+       contains="row 1 cites #9999, which is not merged on the main line")
+def _(world: World) -> None:
+    _recorded(world, swap=("#12, [the other", "#9999, [the other"))
+    world.branch("seal-link")
+    world.write("work/seal.md", "# The seal's link\n")
+    world.commit("Link the seal's pull request (#9999)")
+    world.checkout("main")
+    world.git("merge", "-q", "--no-ff", "-m", "Merge pull request #20 from team/seal-link", "seal-link")
+
+
+@proof("timeline/state-cited", "a Done row linking a folder on the main line", expect="pass")
+def _(world: World) -> None:
+    _recorded(world, swap=("[the record](../docs/rehearsal.md)", "[the check](../research/2026-11-26_check/)"))
 
 
 @proof("timeline/state-cited", "a Sealed row linking a seal that is only on a branch", expect="fail",

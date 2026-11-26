@@ -328,9 +328,10 @@ started state then its day. A state is `started` (the default) or not, `finished
 cite: `pr` for a bare `#12`, or path patterns. A new `[timeline]` table is a tightening. A state
 added to it later is a weakening, and so is any change inside a state but its first setting.
 
-A bare `#12` is a pull request of this repository, merged when a commit the main line reaches
-names it (`Merge pull request #12`, or a squash merge's `(#12)`); another repository's is written
-as a link and kept apart. A cited path must be in the main line's tree. A day, a month or a span
+A bare `#12` is a pull request of this repository, merged when a commit the main line reaches is
+`Merge pull request #12`, or a first-parent commit of the main line ends `(#12)`, as a squash
+merge does; another repository's is written as a link and kept apart. A cited path must be in the
+main line's tree, as a file or a folder that holds one. A day, a month or a span
 is stale once its last day is more than `grace_days` (1) behind; `today` fixes the day for a
 proof. A wait is a state's `on` rows, a stopped state's `until` rows, and an unstarted row's
 `After` rows. `plans-listed` reads every link in a row, against the files its `plans` patterns

@@ -140,10 +140,16 @@ class Git:
 
     @functools.lru_cache(maxsize=None)
     def pull_requests(self, ref: str) -> frozenset[int]:
-        """The numbers of the pull requests merged into this line, read from the subjects of every
-        commit it reaches (a stacked pull request merges inside another)."""
-        found = (PULL_REQUEST.search(subject) for subject in (self.run("log", "--format=%s", ref) or "").splitlines())
-        return frozenset(int(hit[1] or hit[2]) for hit in found if hit)
+        """The numbers of the pull requests merged into this line. A `Merge pull request #12` subject
+        counts on any commit the line reaches, since a stacked pull request merges inside another; a
+        squash merge's `(#12)` only on the line's own first-parent commits, since a branch's commit
+        may end its subject so without merging anything."""
+        def hits(*flags: str) -> list[re.Match[str]]:
+            subjects = (self.run("log", *flags, "--format=%s", ref) or "").splitlines()
+            return [hit for hit in map(PULL_REQUEST.search, subjects) if hit]
+
+        merges = {int(hit[2]) for hit in hits() if hit[2]}
+        return frozenset(merges | {int(hit[1]) for hit in hits("--first-parent") if hit[1]})
 
     @functools.lru_cache(maxsize=None)
     def added_by(self, path: str) -> str | None:
