@@ -80,6 +80,8 @@ def shape(ctx: Context) -> None:
         elif states[row.state].get("started", True) and row.day is None:
             say(row.day_problem or f"**{row.state}** is a started state, and the cell gives no day after it",
                 f"write the day after the state, as **{row.state}** 26 Nov 2026")
+        if row.until_problem:
+            say(row.until_problem, "write until, then a day with its year, rows, or a person's go, as until your go")
         if not _someone(row.cells.get("who")):
             say("Who names no one", "write who does the task")
         if not row.plan_links:
@@ -227,6 +229,18 @@ def _(world: World) -> None:
 @proof("timeline/shape", "a started state whose day has no year", expect="fail", contains="the day 26 Nov has no year")
 def _(world: World) -> None:
     _timeline(world, swap=("**Built** 26 Nov 2026:", "**Built** 26 Nov:"))
+
+
+@proof("timeline/shape", "a pause until a day with no year", expect="fail",
+       contains="row 3: the day Mon 23 Nov has no year")
+def _(world: World) -> None:
+    _timeline(world, swap=("until your go", "until Mon 23 Nov"))
+
+
+@proof("timeline/shape", "a pause until a weekday that is not the day's", expect="fail",
+       contains="row 3: Wed 1 Dec 2026 is a Tuesday")
+def _(world: World) -> None:
+    _timeline(world, swap=("until your go", "until Wed 1 Dec 2026"))
 
 
 @proof("timeline/shape", "a Status cell with no state", expect="fail", contains="does not begin with a state in bold")
