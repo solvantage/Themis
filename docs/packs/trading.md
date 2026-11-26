@@ -1,6 +1,6 @@
 # The trading pack
 
-> 2026-11-20. Status: **built**: twenty-seven rules in seven gates. Standard id: `themis-trading/1`.
+> 2026-11-20. Status: **built**: twenty-eight rules in seven gates. Standard id: `themis-trading/1`.
 > `themis describe` lists each rule below and whether its proofs hold.
 
 **In one line:** this pack teaches Themis what evidence means in trading research. A trial is
@@ -171,7 +171,7 @@ A forward run has no scorecard and no audit. Its weeks are its results, each dec
 
 ## 5. The pack's rules
 
-Twenty-seven rules in seven gates, beside the core's.
+Twenty-eight rules in seven gates, beside the core's.
 
 ### Gate: trials — attempts are counted honestly
 
@@ -216,11 +216,12 @@ Twenty-seven rules in seven gates, beside the core's.
 | `scorecard/explainer` | A published result has one short page for a newcomer, or says why it has none. | `max_bytes`, `max_controls`, `kinds` |
 | `scorecard/rendering` | No page puts two bare dollar signs in one line, and no chart file is oversized. | `max_chart_bytes` |
 
-### Gate: live — nothing trades live by default
+### Gate: live — nothing trades live by default, and no money moves before its run passes
 
 | Rule | The promise | Parameters |
 | --- | --- | --- |
 | `live/off-by-default` | Every live-trading switch holds its safe value in the source, unless the owner granted that file its flip. | `switches`, `absent` |
+| `live/money-gated` | A row that commits money names the sealed run it waits on, and starts only after that run's last decision is a pass. | `words` |
 
 ### Gate: forward — a live run is held to a replay of the same dates
 
@@ -285,6 +286,15 @@ What the rules read, in more detail:
   whether it was flipped from the main line or written that way, until the owner runs `themis grant
   live <file>` for that file. A selected file with no switch is refused, or skipped with `absent =
   "skip"`. A pattern that matches no file, or has other than one capture group, is refused.
+- **`live/money-gated`.** It reads the core's timeline (`[timeline]`; not configured without it).
+  A row commits money when its Task cell holds one of `words` (`deposit`, `bought`, `fee` when
+  unset; each whole, in any case, or with an `s` after it), or when its Gate cell holds anything
+  but `–`. Its Gate is a link to a forward run's seal, or `row N` for the row that will seal it:
+  row N must exist and not be finished, and its run is the forward seal row N's Status links once
+  it is sealed. A started row gives its day. On that day, the last decision of the run (by
+  `decided_at`, on or before the day) must be a pass, or a week the owner overruled with a
+  `forward` grant given by then. A started row gated on a row that has sealed nothing yet fails; a
+  decision whose time cannot be read is refused, and the row is not judged.
 - **`scorecard/rendering`.** It reads every Markdown page in a study with the core's reader, the
   one `docs/no-bare-dollar-pairs` uses: a sign in a code span, a fence, an HTML block or a link
   target is not prose, and a fence closes only as CommonMark says. A project that turns on the
@@ -446,6 +456,7 @@ Everything here belongs to the project.
 | `scorecard/rendering` | `max_chart_bytes` | The cap on one page or picture under `results/` |
 | `live/off-by-default` | `switches` | Each live-trading switch: `files`, `pattern` with one capture group, and its `safe` value |
 | | `absent` | `refuse` (the default: a selected file must hold the switch) or `skip` |
+| `live/money-gated` | `words` | The words that mark a timeline row's task as one that commits money; `deposit`, `bought` and `fee` when unset |
 
 ```toml
 [trading.windows.train]
@@ -593,6 +604,7 @@ Every rule has cases that pass, fail and refuse, and `themis prove` runs them. A
 | `validity/audit-reproduced` | Name the study's own run script as its audit | FAIL |
 | `validity/same-basis` | Rank two runs from two different sessions side by side | FAIL |
 | `live/off-by-default` | Flip a live-trading switch on a branch with no grant | FAIL |
+| `live/money-gated` | Start a deposit row while its run's last decision is a stop | FAIL |
 | `scorecard/rendering` | Two prices on one line, after a shorter fence inside a long one | FAIL |
 | `forward/sealed-before-start` | Merge the seal an hour after the first live trade | FAIL |
 | `forward/no-retune` | Trade a forward run's third week on another settings fingerprint | FAIL |
@@ -630,6 +642,9 @@ Every rule has cases that pass, fail and refuse, and `themis prove` runs them. A
   correlation is above zero.
 - **It cannot stop code that reads sealed data another way.** `data.window` guards the dates it
   hands over. Code that opens the files itself leaves no look.
+- **It cannot see money moved with no row.** `live/money-gated` reads only the timeline's rows,
+  and a row's task only for the words in `words`. A deposit made with no row, or written in other
+  words with Gate `–`, is invisible to it.
 
 Not built yet:
 
@@ -673,6 +688,7 @@ line, which `themis explain <rule id>` prints:
 | `scorecard/explainer` | A result was explained by a page of sliders that no newcomer could follow. |
 | `scorecard/rendering` | A page showed two prices in one line, and the words between them were set as mathematics and lost. |
 | `live/off-by-default` | A strategy shipped with live trading on by default, and one attached copy would have traded real money. |
+| `live/money-gated` | A prop firm's account was to be bought "after the demo months pass", and only the words of its timeline row held it to that. |
 | `forward/sealed-before-start` | A forward run's lines were written down after its first live week was seen, and fitted that week. |
 | `forward/same-dates-control` | A live week was laid beside a replay of other dates, from another balance, and the gap was read as the cost of trading live. |
 | `forward/match` | Live entries were paired with the replay's by hand, and the ones that did not fit were left out of the count. |
