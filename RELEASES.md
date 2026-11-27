@@ -5,6 +5,7 @@ edit it by hand: a test fails when it differs from the receipts.
 
 | Version | Published (UTC) | Commit | Tests | Wheel SHA-256 | Receipt |
 | --- | --- | --- | --- | --- | --- |
+| 0.4.0 | 2026-11-26 23:09 | `0cc3580831e9` | 3235 passed | `03810c7a9c2f…` | [0.4.0.json](receipts/publish/0.4.0.json) |
 | 0.3.1 | 2026-11-21 02:29 | `b7bb89f42b86` | 3122 passed | `913c834b16ec…` | [0.3.1.json](receipts/publish/0.3.1.json) |
 | 0.3.0 | 2026-11-20 01:36 | `14f66159665f` | 2896 passed | `2aa4a5a1532e…` | [0.3.0.json](receipts/publish/0.3.0.json) |
 | 0.2.1 | 2026-11-19 18:39 | `10ab7aa56de0` | 2699 passed | `09ad093a82c8…` | [0.2.1.json](receipts/publish/0.2.1.json) |
@@ -14,12 +15,12 @@ edit it by hand: a test fails when it differs from the receipts.
 
 ## Install the latest release
 
-The latest release is **0.3.1**, built from commit `b7bb89f42b861807a8b6cc849f72ee81ac7abbf3`.
+The latest release is **0.4.0**, built from commit `0cc3580831e996ca26a23643adda23bf39fb42a0`.
 
 From the repository, pinned to that commit:
 
 ```bash
-uv add --dev "themis-guardrails @ git+https://github.com/solvantage/Themis@b7bb89f42b861807a8b6cc849f72ee81ac7abbf3"
+uv add --dev "themis-guardrails @ git+https://github.com/solvantage/Themis@0cc3580831e996ca26a23643adda23bf39fb42a0"
 ```
 
 From the local index, on the machine that published it: see
